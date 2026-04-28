@@ -1,0 +1,16 @@
+flask
+playwright
+Pillow
+ImageHash
+torch
+transformers
+openpyxl
+requests
+python-dotenv
+numpy
+beautifulsoup4
+fake_useragent
+lxml
+DrissionPage
+pywin32
+pyautogui

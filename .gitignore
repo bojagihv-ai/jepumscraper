@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+data/
+logs/
+akamai_cookies/
+*.db
+*.xlsx
+*.log
+coupang_*
+gmarket_*
+naver_*
+*.html
+!templates/
