@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JepumSangse — 경쟁사 상세페이지 분석기</title>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #0a0c14;
+            --surface: #111520;
+            --card: #181d2e;
+            --border: #252b42;
+            --primary: #6366f1;
+            --primary-h: #4f52d4;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text: #e8eaf0;
+            --muted: #7a8099;
+            --radius: 14px;
+        }
+
+        body {
+            font-family: 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 32px 16px 60px;
+        }
+
+        /* ── 헤더 ── */
+        .app-header {
+            width: 100%;
+            max-width: 780px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 28px;
+        }
+
+        .app-logo {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .app-logo h1 {
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        .app-logo span {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+
+        .btn-settings {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 8px 16px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 40px;
+            cursor: pointer;
+            color: var(--text);
+            font-size: 0.85rem;
+            font-weight: 600;
+            transition: all .2s;
+        }
+
+        .btn-settings:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        /* ── 메인 카드 ── */
+        .main-card {
+            width: 100%;
+            max-width: 780px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 36px 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+        }
+
+        .field-label {
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: .6px;
+            color: var(--muted);
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        /* 제품명 입력 */
+        .input-wrap {
+            margin-bottom: 24px;
+        }
+
+        .input-name {
+            width: 100%;
+            padding: 14px 18px;
+            background: var(--card);
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 1.05rem;
+            font-family: inherit;
+            transition: border-color .2s;
+        }
+
+        .input-name:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .input-name::placeholder {
+            color: var(--muted);
+        }
+
+        /* 이미지 업로드 */
+        .image-wrap {
+            margin-bottom: 28px;
+        }
+
+        .drop-zone {
+            width: 100%;
+            min-height: 200px;
+            border: 2px dashed var(--primary);
+            border-radius: 12px;
+            background: rgba(99, 102, 241, .06);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all .2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.over {
+            background: rgba(99, 102, 241, .12);
+            border-color: #818cf8;
+        }
+
+        .drop-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .drop-prompt {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 32px;
+            color: var(--muted);
+            pointer-events: none;
+        }
+
+        .drop-prompt svg {
+            opacity: .5;
+        }
+
+        .drop-prompt p {
+            font-size: .9rem;
+        }
+
+        .drop-prompt small {
+            font-size: .78rem;
+            opacity: .6;
+        }
+
+        /* 이미지 미리보기 — 짤림 없이 전체 표시 */
+        #imagePreview {
+            display: none;
+            width: 100%;
+            padding: 12px;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #imagePreview img {
+            max-width: 100%;
+            max-height: 340px;
+            object-fit: contain;
+            border-radius: 8px;
+            background: #fff;
+        }
+
+        #imagePreview .img-info {
+            font-size: .8rem;
+            color: var(--muted);
+            text-align: center;
+        }
+
+        #changeImgBtn {
+            font-size: .8rem;
+            color: var(--primary);
+            background: none;
+            border: none;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        /* 검색 버튼 */
+        .btn-search {
+            width: 100%;
+            padding: 16px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.05rem;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background .2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-search:hover:not(:disabled) {
+            background: var(--primary-h);
+        }
+
+        .btn-search:disabled {
+            background: var(--border);
+            cursor: not-allowed;
+        }
+
+        /* 진행 상태 */
+        .progress-area {
+            display: none;
+            margin-top: 18px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 20px;
+        }
+
+        .progress-steps {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: .88rem;
+            color: var(--muted);
+        }
+
+        .step.active {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .step.done {
+            color: var(--success);
+        }
+
+        .step-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border);
+            flex-shrink: 0;
+        }
+
+        .step.active .step-dot {
+            background: var(--primary);
+            animation: pulse 1s ease infinite;
+        }
+
+        .step.done .step-dot {
+            background: var(--success);
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .3;
+            }
+        }
+
+        /* ── 설정 오버레이 ── */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .7);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .overlay.open {
+            display: flex;
+        }
+
+        .settings-panel {
+            width: min(680px, 95vw);
+            max-height: 88vh;
+            overflow-y: auto;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 32px 36px;
+        }
+
+        .settings-panel h2 {
+            font-size: 1.25rem;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+
+        .settings-panel .sub {
+            font-size: .83rem;
+            color: var(--muted);
+            margin-bottom: 28px;
+        }
+
+        .settings-section {
+            margin-bottom: 28px;
+        }
+
+        .settings-section h3 {
+            font-size: .78rem;
+            font-weight: 700;
+            letter-spacing: .6px;
+            color: var(--muted);
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            margin-bottom: 14px;
+        }
+
+        /* 플랫폼 카드 */
+        .platform-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .platform-item {
+            display: flex;
+            align-items: center;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 16px;
+            gap: 14px;
+        }
+
+        .platform-item.active {
+            border-color: var(--primary);
+        }
+
+        .platform-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: .75rem;
+            font-weight: 800;
+            flex-shrink: 0;
+        }
+
+        .platform-info {
+            flex: 1;
+        }
+
+        .platform-info .p-name {
+            font-size: .95rem;
+            font-weight: 600;
+        }
+
+        .platform-info .p-status {
+            font-size: .78rem;
+            margin-top: 3px;
+        }
+
+        .p-status.ok {
+            color: var(--success);
+        }
+
+        .p-status.need-key {
+            color: var(--warning);
+        }
+
+        .p-status.off {
+            color: var(--muted);
+        }
+
+        /* API 키 패널 */
+        .api-panel {
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 10px;
+            padding: 12px;
+            background: rgba(99, 102, 241, .06);
+            border-radius: 8px;
+            border: 1px solid rgba(99, 102, 241, .2);
+        }
+
+        .api-panel.show {
+            display: flex;
+        }
+
+        .api-input-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .api-input-row label {
+            font-size: .75rem;
+            color: var(--muted);
+            font-weight: 600;
+        }
+
+        .api-input {
+            padding: 9px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            font-size: .87rem;
+            font-family: inherit;
+        }
+
+        .api-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        /* 토글 스위치 */
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            cursor: pointer;
+            background: var(--border);
+            border-radius: 24px;
+            transition: .25s;
+        }
+
+        .toggle-slider::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #fff;
+            left: 3px;
+            top: 3px;
+            transition: .25s;
+        }
+
+        .toggle-switch input:checked+.toggle-slider {
+            background: var(--primary);
+        }
+
+        .toggle-switch input:checked+.toggle-slider::before {
+            transform: translateX(20px);
+        }
+
+        /* 슬라이더 */
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .slider-row label {
+            font-size: .85rem;
+            width: 200px;
+            flex-shrink: 0;
+        }
+
+        .slider-row input[type=range] {
+            flex: 1;
+            accent-color: var(--primary);
+        }
+
+        .slider-val {
+            font-size: .85rem;
+            font-weight: 700;
+            width: 40px;
+            text-align: right;
+            color: var(--primary);
+        }
+
+        /* 설정 저장 버튼 */
+        .settings-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 8px;
+        }
+
+        .btn-cancel {
+            padding: 10px 22px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: .9rem;
+            font-family: inherit;
+        }
+
+        .btn-cancel:hover {
+            border-color: var(--text);
+            color: var(--text);
+        }
+
+        .btn-save {
+            padding: 10px 26px;
+            border-radius: 8px;
+            cursor: pointer;
+            background: var(--primary);
+            border: none;
+            color: #fff;
+            font-size: .9rem;
+            font-weight: 700;
+            font-family: inherit;
+            transition: background .2s;
+        }
+
+        .btn-save:hover {
+            background: var(--primary-h);
+        }
+
+        /* 토스트 */
+        .toast {
+            position: fixed;
+            bottom: 28px;
+            right: 28px;
+            background: var(--card);
+            border: 1px solid var(--success);
+            color: var(--success);
+            padding: 12px 22px;
+            border-radius: 10px;
+            font-size: .9rem;
+            font-weight: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all .3s;
+            pointer-events: none;
+            z-index: 200;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* 새 CSS: 모드로 토글 그룹 */
+        .toggle-row-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .mode-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .mode-label {
+            font-size: .8rem;
+            color: var(--muted);
+            font-weight: 500;
+        }
+
+        .toggle-switch.sm {
+            width: 36px;
+            height: 20px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch.sm .toggle-slider::before {
+            width: 14px;
+            height: 14px;
+            left: 3px;
+            top: 3px;
+        }
+
+        .toggle-switch.sm input:checked+.toggle-slider::before {
+            transform: translateX(16px);
+        }
+
+        .key-hint {
+            font-size: .72rem;
+            color: var(--warning);
+            margin: 4px 0 0 0;
+        }
+
+        .api-guide-link {
+            font-size: .72rem;
+            color: #60a5fa;
+            text-decoration: none;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .api-guide-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- 헤더 -->
+    <header class="app-header">
+        <div class="app-logo">
+            <h1>🔍 JepumSangse</h1>
+            <span>전통공예품 경쟁사 상세페이지 자동 수집기 (플랫폼당 최대 5개 업체)</span>
+        </div>
+        <button class="btn-settings" onclick="openSettings()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3" />
+                <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            설정
+        </button>
+    </header>
+
+    <!-- 메인 카드 -->
+    <main class="main-card">
+        <form id="searchForm">
+
+            <!-- 제품명 -->
+            <div class="input-wrap">
+                <div class="field-label">제품 이름</div>
+                <input type="text" id="productName" name="productName" class="input-name"
+                    placeholder="예: 나전칠기 보석함, 무궁화 자개 열쇠고리" autocomplete="off">
+            </div>
+
+            <!-- 이미지 업로드 -->
+            <div class="image-wrap">
+                <div class="field-label">제품 이미지</div>
+
+                <div class="drop-zone" id="dropZone">
+                    <input type="file" id="fileInput" name="images" accept="image/*" multiple>
+                    <div class="drop-prompt" id="dropPrompt">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="1.5">
+                            <rect x="3" y="3" width="18" height="18" rx="3" />
+                            <circle cx="8.5" cy="8.5" r="1.5" />
+                            <polyline points="21 15 16 10 5 21" />
+                        </svg>
+                        <p>클릭하거나 이미지를 드래그하세요</p>
+                        <small>JPG, PNG, WEBP 지원 · 한 장 또는 여러 장 선택 가능 (모두 큐에 등록)</small>
+                    </div>
+                    <div id="imagePreview">
+                        <img id="previewImg" src="" alt="미리보기">
+                        <div class="img-info">
+                            <span id="imgName"></span> &nbsp;·&nbsp; <span id="imgSize"></span>
+                            <br><button type="button" id="changeImgBtn">이미지 변경</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 검색 버튼 군 -->
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="submit" class="btn-search" id="searchBtn" style="flex: 1;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    즉시 검색 (단일)
+                </button>
+                <button type="button" class="btn-search" id="queueBtn" style="flex: 1; background: #22c55e;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                    자동 수집 예약 (다중/백그라운드)
+                </button>
+            </div>
+
+            <!-- 자동 테스트 버튼 -->
+            <div style="margin-top: 12px; padding: 16px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); border-radius: 12px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+                    <span style="font-size:0.85rem; font-weight:600; color:#f59e0b;">🧪 자동 테스트</span>
+                    <span style="font-size:0.78rem; color:#9ca3af;">이전 검색 결과 재사용 · 플랫폼별 1개씩 캡처</span>
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;" id="autotestPlatforms">
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.83rem; color:#d1d5db; padding:5px 10px; background:#1e293b; border-radius:6px; border:1px solid #334155;">
+                        <input type="checkbox" value="쿠팡" checked style="accent-color:#f59e0b;"> 쿠팡
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.83rem; color:#d1d5db; padding:5px 10px; background:#1e293b; border-radius:6px; border:1px solid #334155;">
+                        <input type="checkbox" value="네이버쇼핑" checked style="accent-color:#f59e0b;"> 네이버쇼핑
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.83rem; color:#d1d5db; padding:5px 10px; background:#1e293b; border-radius:6px; border:1px solid #334155;">
+                        <input type="checkbox" value="11번가" style="accent-color:#f59e0b;"> 11번가
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.83rem; color:#d1d5db; padding:5px 10px; background:#1e293b; border-radius:6px; border:1px solid #334155;">
+                        <input type="checkbox" value="G마켓" style="accent-color:#f59e0b;"> G마켓
+                    </label>
+                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.83rem; color:#d1d5db; padding:5px 10px; background:#1e293b; border-radius:6px; border:1px solid #334155;">
+                        <input type="checkbox" value="옥션" style="accent-color:#f59e0b;"> 옥션
+                    </label>
+                </div>
+                <button type="button" id="autotestBtn" onclick="runAutotest()"
+                    style="width:100%; padding:10px; background:linear-gradient(135deg,#f59e0b,#d97706); border:none; border-radius:8px; color:#fff; font-size:0.9rem; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    자동 테스트 실행
+                </button>
+                <!-- 결과 표시 -->
+                <div id="autotestResult" style="display:none; margin-top:12px;"></div>
+            </div>
+
+            <!-- 이전 결과 바로가기 배너 -->
+            <div id="lastSessionBanner" style="display:none; margin-top:14px; padding:14px 18px;
+                background:linear-gradient(135deg,#1e2540,#252d4a); border:1px solid #3a4370;
+                border-radius:12px; display:none; align-items:center; gap:14px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" stroke-width="2">
+                    <path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/>
+                </svg>
+                <div style="flex:1; min-width:0;">
+                    <div style="font-size:0.78rem; color:#7a8099; margin-bottom:2px;">마지막 검색 결과</div>
+                    <div id="lastSessionName" style="font-size:0.95rem; font-weight:600; color:#e8eaf0;
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                </div>
+                <button id="lastSessionBtn" onclick="goToLastSession()"
+                    style="flex-shrink:0; padding:8px 18px; background:#6366f1; border:none;
+                    border-radius:8px; color:#fff; font-size:0.88rem; font-weight:600; cursor:pointer;
+                    white-space:nowrap;">
+                    결과 보기 →
+                </button>
+            </div>
+
+            <!-- 진행 단계 -->
+            <div class="progress-area" id="progressArea">
+                <ul class="progress-steps">
+                    <li class="step" id="step1"><span class="step-dot"></span><span class="step-label">쇼핑몰 검색
+                            중...</span></li>
+                    <li class="step" id="step2"><span class="step-dot"></span><span class="step-label">썸네일 수집 및
+                            다운로드</span></li>
+                    <li class="step" id="step3"><span class="step-dot"></span><span class="step-label">AI 이미지 유사도 분석
+                            (CLIP)</span></li>
+                    <li class="step" id="step4"><span class="step-dot"></span><span class="step-label">3단계 매칭 분류</span>
+                    </li>
+                </ul>
+                <div id="liveStatus"
+                    style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 8px; font-size: 0.85rem; color: #93c5fd; min-height: 22px; transition: all 0.3s;">
+                    <span id="liveStatusText">대기 중...</span>
+                </div>
+            </div>
+        </form>
+    </main>
+
+    <!-- ── 설정 오버레이 ── -->
+    <div class="overlay" id="settingsOverlay">
+        <div class="settings-panel">
+            <h2>⚙️ 설정</h2>
+            <p class="sub">검색할 플랫폼을 선택하고 API 키를 입력하세요. 저장 후 바로 반영됩니다.</p>
+
+            <!-- 플랫폼 목록 -->
+            <div class="settings-section">
+                <h3>쇼핑몰 플랫폼</h3>
+                <div class="platform-list" id="platformList">
+                    <!-- JS로 렌더링 -->
+                </div>
+            </div>
+
+            <!-- 네이버 로그인 -->
+            <div class="settings-section">
+                <h3>🔐 네이버 로그인 (상세페이지 캡처용)</h3>
+                <p style="font-size:0.8rem; color:#9ca3af; margin-bottom:12px;">
+                    입력 시 네이버 상품 상세페이지를 자동 로그인 후 캡처합니다. 정보는 이 PC에만 저장됩니다.
+                </p>
+                <div class="slider-row" style="display:flex; flex-direction:column; gap:8px; align-items:flex-start;">
+                    <label style="font-size:0.85rem; color:#d1d5db;">아이디</label>
+                    <input type="text" id="naver_id" placeholder="네이버 아이디"
+                        style="width:100%; padding:8px 12px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.9rem;">
+                </div>
+                <div class="slider-row" style="display:flex; flex-direction:column; gap:8px; align-items:flex-start; margin-top:10px;">
+                    <label style="font-size:0.85rem; color:#d1d5db;">비밀번호</label>
+                    <input type="password" id="naver_pw" placeholder="네이버 비밀번호"
+                        style="width:100%; padding:8px 12px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.9rem;">
+                </div>
+            </div>
+
+            <!-- 매칭 민감도 -->
+            <div class="settings-section">
+                <h3>매칭 민감도 조정</h3>
+                <div class="slider-row">
+                    <label>1단계 (동일이미지) 해밍 거리 임계값</label>
+                    <input type="range" id="sl_phash" min="0" max="20" step="1" value="5"
+                        oninput="document.getElementById('v_phash').textContent=this.value">
+                    <span class="slider-val" id="v_phash">5</span>
+                </div>
+                <div class="slider-row">
+                    <label>2단계 CLIP 유사도 임계값</label>
+                    <input type="range" id="sl_clip2" min="0.5" max="1.0" step="0.01" value="0.82"
+                        oninput="document.getElementById('v_clip2').textContent=parseFloat(this.value).toFixed(2)">
+                    <span class="slider-val" id="v_clip2">0.82</span>
+                </div>
+                <div class="slider-row">
+                    <label>3단계 CLIP 유사도 임계값</label>
+                    <input type="range" id="sl_clip3" min="0.5" max="1.0" step="0.01" value="0.75"
+                        oninput="document.getElementById('v_clip3').textContent=parseFloat(this.value).toFixed(2)">
+                    <span class="slider-val" id="v_clip3">0.75</span>
+                </div>
+                <div class="slider-row">
+                    <label>한 번에 검수할 최대 제품 수</label>
+                    <input type="range" id="sl_max" min="5" max="30" step="1" value="15"
+                        oninput="document.getElementById('v_max').textContent=this.value">
+                    <span class="slider-val" id="v_max">15</span>
+                </div>
+                <div class="slider-row">
+                    <label>상세페이지 분할 높이 (0: 통째로 길게 저장)</label>
+                    <input type="range" id="sl_slice" min="0" max="10000" step="500" value="0"
+                        oninput="document.getElementById('v_slice').textContent=this.value == 0 ? '단일(자르지않음)' : this.value + 'px'">
+                    <span class="slider-val" id="v_slice">0</span>
+                </div>
+            </div>
+
+            <div class="settings-footer">
+                <button class="btn-cancel" onclick="closeSettings()">취소</button>
+                <button class="btn-save" onclick="saveSettings()">저장하기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 토스트 -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ── 플랫폼 정의 ──
+        const PLATFORMS_META = {
+            naver: {
+                name: '네이버 스마트스토어', color: '#03c75a', icon: 'N',
+                hasApi: true,
+                keys: ['naver_client_id', 'naver_client_secret'],
+                labels: ['Client ID', 'Client Secret'],
+                apiGuide: 'https://developers.naver.com/apps/',
+                hasScraping: true
+            },
+            coupang: {
+                name: '쿠팡', color: '#c00d10', icon: 'C',
+                hasApi: true,
+                keys: ['coupang_access_key', 'coupang_secret_key'],
+                labels: ['Access Key', 'Secret Key'],
+                apiGuide: 'https://partners.coupang.com/',
+                hasScraping: true
+            },
+            gmarket: {
+                name: 'G마켓', color: '#e53e00', icon: 'G',
+                hasApi: true,
+                keys: ['gmarket_api_key'],
+                labels: ['API Key'],
+                apiGuide: 'https://dev.gmarket.co.kr/',
+                hasScraping: true
+            },
+            auction: {
+                name: '옥션', color: '#0064c8', icon: 'A',
+                hasApi: true,
+                keys: ['auction_api_key'],
+                labels: ['API Key'],
+                apiGuide: 'https://dev.gmarket.co.kr/',
+                hasScraping: true
+            },
+            elevenst: {
+                name: '11번가', color: '#f07428', icon: '11',
+                hasApi: true,
+                keys: ['elevenst_app_key'],
+                labels: ['Open API Key'],
+                apiGuide: 'https://openapi.11st.co.kr/',
+                hasScraping: true
+            },
+        };
+
+        let appSettings = {};
+
+        async function loadSettings() {
+            const res = await fetch('/api/settings');
+            appSettings = await res.json();
+            renderPlatformList();
+            loadSliders();
+        }
+
+        function renderPlatformList() {
+            const list = document.getElementById('platformList');
+            list.innerHTML = '';
+            const plats = appSettings.platforms || {};
+
+            for (const [key, meta] of Object.entries(PLATFORMS_META)) {
+                const cfg = plats[key] || {};
+                const apiOn = cfg.api_enabled || false;
+                const scrapingOn = cfg.scraping_enabled || false;
+                const anyOn = apiOn || scrapingOn;
+
+                const item = document.createElement('div');
+                item.className = 'platform-item' + (anyOn ? ' active' : '');
+                item.id = `plat_${key}`;
+
+                const hasKey = meta.hasApi && appSettings.api_keys && appSettings.api_keys[meta.keys?.[0]];
+
+                item.innerHTML = `
+  <div class="platform-icon" style="background:${meta.color}20;color:${meta.color}">${meta.icon}</div>
+  <div class="platform-info">
+    <div class="p-name">${meta.name}</div>
+    <div class="toggle-row-group">
+      ${meta.hasApi ? `
+      <div class="mode-row">
+        <span class="mode-label">&#128273; API 검색</span>
+        <label class="toggle-switch sm">
+          <input type="checkbox" id="api_tog_${key}" ${apiOn ? 'checked' : ''} onchange="onModeToggle('${key}')">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>` : ''}
+      ${meta.hasScraping ? `
+      <div class="mode-row">
+        <span class="mode-label">&#129302; 자동 스크래핑</span>
+        <label class="toggle-switch sm">
+          <input type="checkbox" id="scraping_tog_${key}" ${scrapingOn ? 'checked' : ''} onchange="onModeToggle('${key}')">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>` : ''}
+    </div>
+    ${meta.hasApi ? `
+    <div class="api-panel ${apiOn ? 'show' : ''}" id="apikeys_${key}">
+      ${(meta.keys || []).map((k, i) => `
+      <div class="api-input-row">
+        <label>${meta.labels[i]}</label>
+        <input class="api-input" type="password" id="key_${k}" placeholder="${meta.labels[i]} 입력"
+          value="${(appSettings.api_keys && appSettings.api_keys[k]) || ''}">
+      </div>`).join('')}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px;">
+        ${!hasKey ? '<p class="key-hint" style="margin:0">&#8251; 키 없어도 🤖 자동 스크래핑으로 검색됩니다</p>' : '<p class="key-hint ok-hint" style="margin:0;color:#10b981">✓ API 키 등록됨</p>'}
+        ${meta.apiGuide ? `<a href="${meta.apiGuide}" target="_blank" class="api-guide-link">🔗 키 발급</a>` : ''}
+      </div>
+    </div>` : ''}
+  </div>`;
+                list.appendChild(item);
+            }
+        }
+
+        function onModeToggle(key) {
+            const apiTog = document.getElementById(`api_tog_${key}`);
+            const scrapingTog = document.getElementById(`scraping_tog_${key}`);
+            const item = document.getElementById(`plat_${key}`);
+            const apiKeys = document.getElementById(`apikeys_${key}`);
+            const anyOn = (apiTog && apiTog.checked) || (scrapingTog && scrapingTog.checked);
+            if (anyOn) item.classList.add('active'); else item.classList.remove('active');
+            if (apiKeys) { if (apiTog && apiTog.checked) apiKeys.classList.add('show'); else apiKeys.classList.remove('show'); }
+        }
+
+        function loadSliders() {
+            const mt = appSettings.match_thresholds || {};
+            if (mt.phash != null) { document.getElementById('sl_phash').value = mt.phash; document.getElementById('v_phash').textContent = mt.phash; }
+            if (mt.clip_tier2 != null) { document.getElementById('sl_clip2').value = mt.clip_tier2; document.getElementById('v_clip2').textContent = parseFloat(mt.clip_tier2).toFixed(2); }
+            if (mt.clip_tier3 != null) { document.getElementById('sl_clip3').value = mt.clip_tier3; document.getElementById('v_clip3').textContent = parseFloat(mt.clip_tier3).toFixed(2); }
+            document.getElementById('sl_max').value = appSettings.max_candidates || 15;
+            document.getElementById('sl_slice').value = appSettings.slice_height || 0;
+            document.getElementById('v_max').textContent = document.getElementById('sl_max').value;
+            document.getElementById('v_slice').textContent = document.getElementById('sl_slice').value == 0 ? '단일(자르지않음)' : document.getElementById('sl_slice').value + 'px';
+            // 네이버 로그인
+            const nl = appSettings.naver_login || {};
+            document.getElementById('naver_id').value = nl.id || '';
+            document.getElementById('naver_pw').value = nl.pw || '';
+        }
+
+        async function saveSettings() {
+            const plats = {};
+            for (const key of Object.keys(PLATFORMS_META)) {
+                const apiTog = document.getElementById(`api_tog_${key}`);
+                const scrapingTog = document.getElementById(`scraping_tog_${key}`);
+                plats[key] = {
+                    api_enabled: apiTog ? apiTog.checked : false,
+                    scraping_enabled: scrapingTog ? scrapingTog.checked : false,
+                };
+            }
+            const apiKeys = {};
+            for (const [key, meta] of Object.entries(PLATFORMS_META)) {
+                if (meta.keys) {
+                    meta.keys.forEach(k => {
+                        const el = document.getElementById(`key_${k}`);
+                        if (el) apiKeys[k] = el.value.trim();
+                    });
+                }
+            }
+            const body = {
+                platforms: plats,
+                api_keys: apiKeys,
+                naver_login: {
+                    id: document.getElementById('naver_id').value.trim(),
+                    pw: document.getElementById('naver_pw').value,
+                },
+                match_thresholds: {
+                    phash: parseInt(document.getElementById('sl_phash').value),
+                    clip_tier2: parseFloat(document.getElementById('sl_clip2').value),
+                    clip_tier3: parseFloat(document.getElementById('sl_clip3').value),
+                },
+                max_candidates: parseInt(document.getElementById('sl_max').value),
+                slice_height: parseInt(document.getElementById('sl_slice').value),
+            };
+            const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (r.ok) {
+                appSettings = await (await fetch('/api/settings')).json();
+                renderPlatformList();
+                closeSettings();
+                showToast('&#10003; 설정이 저장되었습니다');
+            } else {
+                showToast('&#9888; 저장 실패');
+            }
+        }
+
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg; t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 2500);
+        }
+        function openSettings() { loadSettings(); document.getElementById('settingsOverlay').classList.add('open'); }
+        function closeSettings() { document.getElementById('settingsOverlay').classList.remove('open'); }
+
+        // 오버레이 바깥 클릭 시 닫기
+        document.getElementById('settingsOverlay').addEventListener('click', e => {
+            if (e.target === document.getElementById('settingsOverlay')) closeSettings();
+        });
+
+        // ── 이미지 업로드 ──
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const dropPrompt = document.getElementById('dropPrompt');
+        const imagePreview = document.getElementById('imagePreview');
+
+        // ── 로컬 스토리지에 데이터 캐싱 (새로고침 시 유지) ──
+        function dataURItoFile(dataURI, filename, mime) {
+            try {
+                const arr = dataURI.split(',');
+                const bstr = atob(arr[1]);
+                let n = bstr.length;
+                const u8arr = new Uint8Array(n);
+                while (n--) u8arr[n] = bstr.charCodeAt(n);
+                return new File([u8arr], filename, { type: mime });
+            } catch (e) { return null; }
+        }
+
+        const pnInput = document.getElementById('productName');
+        pnInput.addEventListener('input', e => {
+            localStorage.setItem('lastProductName', e.target.value);
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedName = localStorage.getItem('lastProductName');
+            if (savedName) pnInput.value = savedName;
+
+            const savedBase64 = localStorage.getItem('lastImageBase64');
+            const savedNameStr = localStorage.getItem('lastImageName');
+            const savedType = localStorage.getItem('lastImageType');
+            if (savedBase64 && savedNameStr && savedType) {
+                const f = dataURItoFile(savedBase64, savedNameStr, savedType);
+                if (f) {
+                    const dt = new DataTransfer();
+                    dt.items.add(f);
+                    fileInput.files = dt.files;
+                    showPreview(dt.files, true);
+                }
+            }
+        });
+
+        function showPreview(files, skipSave = false) {
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                document.getElementById('previewImg').src = e.target.result;
+                let txt = file.name;
+                if (files.length > 1) txt += ` 외 ${files.length - 1}건`;
+                document.getElementById('imgName').textContent = txt;
+                let totalSize = 0;
+                for (let i = 0; i < files.length; i++) totalSize += files[i].size;
+                document.getElementById('imgSize').textContent = (totalSize / 1024).toFixed(0) + ' KB';
+                dropPrompt.style.display = 'none';
+                imagePreview.style.display = 'flex';
+
+                if (!skipSave) {
+                    try {
+                        localStorage.setItem('lastImageBase64', e.target.result);
+                        localStorage.setItem('lastImageName', file.name);
+                        localStorage.setItem('lastImageType', file.type);
+                    } catch (err) {
+                        console.warn('이미지가 너무 커서 LocalStorage 저장 불가', err);
+                    }
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        fileInput.addEventListener('change', () => { if (fileInput.files.length > 0) showPreview(fileInput.files); });
+        document.getElementById('changeImgBtn').addEventListener('click', e => {
+            e.preventDefault();
+            fileInput.value = '';
+            dropPrompt.style.display = 'flex';
+            imagePreview.style.display = 'none';
+            fileInput.click();
+        });
+
+        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault(); dropZone.classList.remove('over');
+            const files = e.dataTransfer.files;
+            if (files && files.length > 0) {
+                const dt = new DataTransfer();
+                for (let i = 0; i < files.length; i++) dt.items.add(files[i]);
+                fileInput.files = dt.files;
+                showPreview(files);
+            }
+        });
+
+        // ── 검색 폼 ──
+        const STEPS = ['step1', 'step2', 'step3', 'step4'];
+        function setStep(idx) {
+            STEPS.forEach((s, i) => {
+                const el = document.getElementById(s);
+                el.className = 'step' + (i < idx ? ' done' : (i === idx ? ' active' : ''));
+            });
+        }
+
+        document.getElementById('searchForm').addEventListener('submit', async e => {
+            e.preventDefault();
+            const name = document.getElementById('productName').value.trim();
+            if (!name) { alert('제품 이름을 입력해 주세요.'); return; }
+            if (!fileInput.files[0]) { alert('제품 이미지를 업로드해 주세요.'); return; }
+
+            document.getElementById('searchBtn').disabled = true;
+            document.getElementById('queueBtn').disabled = true;
+            document.getElementById('progressArea').style.display = 'block';
+            setStep(0);
+
+            const form = new FormData();
+            form.append('productName', name);
+            form.append('image', fileInput.files[0]);
+
+            // 폴링 로직: 1초마다 진행 상황을 가져옴
+            let polling = true;
+            const pollProgress = async () => {
+                while (polling) {
+                    try {
+                        const res = await fetch('/api/progress');
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.status) {
+                                const liveEl = document.getElementById('liveStatusText');
+                                if (liveEl) liveEl.textContent = data.status;
+                                const s = data.status;
+                                if (s.includes('검색 시작') || s.includes('검색 중')) setStep(1);
+                                else if (s.includes('결과를 정리') || s.includes('수집')) setStep(2);
+                                else if (s.includes('원본 이미지') || s.includes('분석 중')) setStep(3);
+                                else if (s.includes('완료')) setStep(4);
+                            }
+                        }
+                    } catch (e) { }
+                    await new Promise(r => setTimeout(r, 800));
+                }
+            };
+
+            pollProgress();
+
+            try {
+                const res = await fetch('/api/search', { method: 'POST', body: form });
+                polling = false;
+
+                const data = await res.json();
+                if (res.ok) {
+                    setStep(4); // 모두 완료
+                    window.location.href = data.redirect_url;
+                } else {
+                    alert(data.error || '검색 중 오류가 발생했습니다.');
+                    document.getElementById('searchBtn').disabled = false;
+                    document.getElementById('progressArea').style.display = 'none';
+                }
+            } catch (err) {
+                polling = false;
+                alert('서버와 통신할 수 없습니다. 잠시 후 다시 시도해 주세요.');
+                document.getElementById('searchBtn').disabled = false;
+                document.getElementById('queueBtn').disabled = false;
+                document.getElementById('progressArea').style.display = 'none';
+            }
+        });
+
+        // 자동 수집 예약 로직
+        document.getElementById('queueBtn').addEventListener('click', async e => {
+            e.preventDefault();
+            const name = document.getElementById('productName').value.trim();
+            if (!name) { alert('제품 이름을 입력해 주세요.'); return; }
+            if (!fileInput.files || fileInput.files.length === 0) { alert('제품 이미지를 1장 이상 업로드해 주세요.'); return; }
+
+            document.getElementById('searchBtn').disabled = true;
+            document.getElementById('queueBtn').disabled = true;
+
+            const form = new FormData();
+            form.append('productName', name);
+            for (let i = 0; i < fileInput.files.length; i++) {
+                form.append('images', fileInput.files[i]);
+            }
+
+            try {
+                const res = await fetch('/api/jobs', { method: 'POST', body: form });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(`${data.message}\n리포트 대시보드로 이동합니다.`);
+                    window.location.href = '/report';
+                } else {
+                    alert(data.error || '오류가 발생했습니다.');
+                    document.getElementById('searchBtn').disabled = false;
+                    document.getElementById('queueBtn').disabled = false;
+                }
+            } catch (err) {
+                alert('서버 오류 발생!');
+                document.getElementById('searchBtn').disabled = false;
+                document.getElementById('queueBtn').disabled = false;
+            }
+        });
+
+        // 페이지 로드 시 설정 미리 불러오기
+        loadSettings();
+
+        // ── 마지막 검색 결과 배너 자동 표시 (아래 checkLastSession에서 처리) ──
+        let _lastSessionUrl = null;
+        function goToLastSession() {
+            if (_lastSessionUrl) window.location.href = _lastSessionUrl;
+        }
+
+        // ── 자동 테스트 ──────────────────────────────────────────────────
+        async function runAutotest() {
+            const btn = document.getElementById('autotestBtn');
+            const resultDiv = document.getElementById('autotestResult');
+
+            // 선택된 플랫폼 수집
+            const platforms = Array.from(
+                document.querySelectorAll('#autotestPlatforms input[type=checkbox]:checked')
+            ).map(cb => cb.value);
+
+            if (platforms.length === 0) {
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = '<p style="color:#f87171; font-size:0.85rem;">플랫폼을 하나 이상 선택해주세요.</p>';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></svg> 테스트 중... (브라우저 창이 뜰 수 있음)';
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<p style="color:#93c5fd; font-size:0.85rem;">⏳ 상세페이지 캡처 중... 잠시 기다려주세요.</p>';
+
+            try {
+                const r = await fetch('/api/autotest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ platforms, session_id: _lastSessionId || '' })
+                });
+                const data = await r.json();
+
+                if (!r.ok) {
+                    resultDiv.innerHTML = `<p style="color:#f87171; font-size:0.85rem;">❌ ${data.error}</p>`;
+                    return;
+                }
+
+                // 결과 테이블
+                let html = `<div style="font-size:0.83rem; color:#9ca3af; margin-bottom:8px;">테스트 완료: ${data.tested}개 플랫폼</div>`;
+                html += '<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">';
+                html += '<tr style="color:#9ca3af; border-bottom:1px solid #1e293b;"><th style="text-align:left;padding:4px 6px;">플랫폼</th><th style="text-align:left;padding:4px 6px;">상품명</th><th style="text-align:center;padding:4px 6px;">결과</th><th style="text-align:center;padding:4px 6px;">스크린샷</th></tr>';
+                for (const res of data.results) {
+                    const statusIcon = res.success ? '✅' : (res.platform.includes('네이버') ? '🌐 브라우저 열림' : '❌');
+                    const statusColor = res.success ? '#10b981' : (res.platform.includes('네이버') ? '#60a5fa' : '#f87171');
+                    html += `<tr style="border-bottom:1px solid #0f172a;">
+                        <td style="padding:5px 6px; color:#e5e7eb; font-weight:600;">${res.platform}</td>
+                        <td style="padding:5px 6px; color:#d1d5db; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${res.title}">${res.title}</td>
+                        <td style="padding:5px 6px; text-align:center; color:${statusColor};">${statusIcon}</td>
+                        <td style="padding:5px 6px; text-align:center; color:#9ca3af;">${res.screenshot_count}장</td>
+                    </tr>`;
+                }
+                html += '</table>';
+
+                // 뷰어로 이동 버튼 (세션이 있으면)
+                if (data.session_id) {
+                    html += `<div style="margin-top:10px; display:flex; gap:8px;">
+                        <button onclick="openAutotestViewer(${JSON.stringify(data.scraped_data)})"
+                            style="flex:1; padding:8px; background:#4f46e5; border:none; border-radius:6px; color:#fff; font-size:0.83rem; cursor:pointer;">
+                            📸 캡처 이미지 보기
+                        </button>
+                        <a href="/review/${data.session_id}"
+                            style="flex:1; padding:8px; background:#0f172a; border:1px solid #334155; border-radius:6px; color:#d1d5db; font-size:0.83rem; cursor:pointer; text-decoration:none; text-align:center;">
+                            검색 결과로 이동 →
+                        </a>
+                    </div>`;
+                }
+                resultDiv.innerHTML = html;
+
+            } catch(e) {
+                resultDiv.innerHTML = `<p style="color:#f87171; font-size:0.85rem;">❌ 서버 오류: ${e.message}</p>`;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> 자동 테스트 실행';
+            }
+        }
+
+        function openAutotestViewer(scrapedData) {
+            // review 페이지 뷰어 모달 없이 간단히 새창으로 이미지 보여주기
+            const keys = Object.keys(scrapedData);
+            for (const pid of keys) {
+                const d = scrapedData[pid];
+                const paths = d.screenshots || [];
+                for (const p of paths) {
+                    window.open('/api/local_image?path=' + encodeURIComponent(p), '_blank');
+                }
+            }
+        }
+
+        // spin 애니메이션
+        const spinStyle = document.createElement('style');
+        spinStyle.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+        document.head.appendChild(spinStyle);
+
+        // 마지막 세션 ID 저장
+        let _lastSessionId = '';
+        async function checkLastSession() {
+            try {
+                const r = await fetch('/api/last_session');
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.session_id) {
+                        _lastSessionId = d.session_id;
+                        _lastSessionUrl = `/review/${d.session_id}`;
+                        document.getElementById('lastSessionName').textContent = d.source_name || '이전 검색';
+                        document.getElementById('lastSessionBanner').style.display = 'flex';
+                    }
+                }
+            } catch(e) {}
+        }
+    </script>
+</body>
+
+</html>

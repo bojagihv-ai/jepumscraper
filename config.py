@@ -31,6 +31,15 @@ NAVER_CLIENT_ID = os.getenv('NAVER_CLIENT_ID', '')
 NAVER_CLIENT_SECRET = os.getenv('NAVER_CLIENT_SECRET', '')
 API_KEYS = {}
 
+# --- CAPTCHA 해결 서비스 API 키 ---
+CAPSOLVER_API_KEY   = os.getenv('CAPSOLVER_API_KEY', '')
+TWOCAPTCHA_API_KEY  = os.getenv('TWOCAPTCHA_API_KEY', '')
+ANTICAPTCHA_API_KEY = os.getenv('ANTICAPTCHA_API_KEY', '')
+
+# --- 우회 엔진 설정 ---
+BYPASS_CACHE_DIR = DATA_DIR / 'bypass_cache'
+os.makedirs(BYPASS_CACHE_DIR, exist_ok=True)
+
 # --- 모델 설정 ---
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
 

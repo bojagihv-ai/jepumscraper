@@ -9,10 +9,8 @@ from werkzeug.utils import secure_filename
 import config
 
 # 서비스 및 엔진 로드
-from engines.image_analyzer import get_analyzer
 from scrapers.base_scraper import ProductResult
 from services.search_service import SearchService
-from services.match_service import MatchService
 from services.detail_scraper import DetailScraper
 from exporters.excel_exporter import ExcelExporter
 import progress_store
@@ -62,6 +60,7 @@ DEFAULT_SETTINGS = {
     "max_candidates": 15,
     "scraping_delay_min": 2.0,
     "scraping_delay_max": 4.0,
+    "platform_timeout_sec": 70,
     "slice_height": 0
 }
 
@@ -199,10 +198,7 @@ def load_last_session() -> tuple:
         return None, None
 
 
-# 초기화 (CLIP 모델 사전 로드)
-get_analyzer()
 search_service = SearchService()
-match_service = MatchService()
 detail_scraper = DetailScraper()
 excel_exporter = ExcelExporter()
 
@@ -246,7 +242,7 @@ def update_settings():
     if 'naver_login' in data:
         settings['naver_login'] = data['naver_login']
     # 기타
-    for key in ('max_candidates', 'scraping_delay_min', 'scraping_delay_max', 'slice_height'):
+    for key in ('max_candidates', 'scraping_delay_min', 'scraping_delay_max', 'platform_timeout_sec', 'slice_height'):
         if key in data:
             settings[key] = data[key]
 
@@ -287,6 +283,7 @@ async def search():
     # SearchService 단계에서 이미 scorer.score_all()이 실행됐지만,
     # 이미지 임베딩까지 포함한 정밀 점수를 여기서 재계산
     try:
+        from engines.image_analyzer import get_analyzer
         analyzer = get_analyzer()
         scorer = SimilarityScorer(source_name=product_name)
         scorer.source_embedding = analyzer.get_embedding(save_path)
@@ -298,7 +295,9 @@ async def search():
     logging.info(f"[{session_id}] top-10 선별 완료")
 
     # ── match_service: top-10 기준으로 tier 분류 ──
-    categorized = match_service.classify_matches(save_path, product_name, top_candidates)
+    # CLIP 모델은 첫 매칭 시점에 지연 로드한다.
+    from services.match_service import MatchService
+    categorized = MatchService().classify_matches(save_path, product_name, top_candidates)
 
     all_products = {p.id: p for plist in categorized.values() for p in plist}
     total = len(all_products)

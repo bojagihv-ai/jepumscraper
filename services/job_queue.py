@@ -6,7 +6,6 @@ import os
 import shutil
 from services.history_db import create_job, update_job_status, add_result
 from services.search_service import SearchService
-from services.match_service import MatchService
 from services.detail_scraper import DetailScraper
 import config
 
@@ -32,16 +31,13 @@ class BackgroundJobQueue:
         self._loop.run_until_complete(self._worker())
         
     async def _worker(self):
-        # 작업자에 필요한 서비스 각각 인스턴스화
-        match_service = MatchService()
-        
         while True:
             job = await self._queue.get()
             job_id = job['id']
             try:
                 logger.info(f"[JobQueue] 처리 시작 - JobID: {job_id}")
                 update_job_status(job_id, 'processing')
-                await self._process_job(job, match_service)
+                await self._process_job(job)
                 logger.info(f"[JobQueue] 처리 완료 - JobID: {job_id}")
             except Exception as e:
                 logger.error(f"[JobQueue] 작업 오류 (JobID: {job_id}): {e}", exc_info=True)
@@ -49,7 +45,7 @@ class BackgroundJobQueue:
             finally:
                 self._queue.task_done()
 
-    async def _process_job(self, job, match_service):
+    async def _process_job(self, job):
         job_id = job['id']
         keyword = job['keyword']
         image_path = job['image_path']
@@ -66,6 +62,8 @@ class BackgroundJobQueue:
             return
             
         # 3. 매칭 실행
+        from services.match_service import MatchService
+        match_service = MatchService()
         categorized = match_service.classify_matches(image_path, keyword, raw_results)
         
         total_found = sum(len(lst) for lst in categorized.values())

@@ -225,12 +225,16 @@ class SearchService:
         logger.info(f"[SearchService] '{keyword}' 검색 시작 — {len(self.scrapers)}개 스크래퍼 병렬 실행")
         scraper_names = [s.platform_name for s in self.scrapers]
         progress_store.set_status(f"🔍 검색 시작: {', '.join(scraper_names)}")
+        per_platform_timeout = float(self.settings.get('platform_timeout_sec', 70))
 
         async def safe_search(scraper) -> List[ProductResult]:
             platform = scraper.platform_name
             progress_store.set_status(f"🔍 [{platform}] 검색 중...")
             try:
-                results = await scraper.search(keyword)
+                results = await asyncio.wait_for(
+                    scraper.search(keyword),
+                    timeout=per_platform_timeout,
+                )
                 logger.info(f"[{platform}] ✅ {len(results)}개 수집")
                 
                 # 보고서에 기록
@@ -256,10 +260,10 @@ class SearchService:
                 }
                 return []
 
-        results_list = []
-        for s in self.scrapers:
-            res = await safe_search(s)
-            results_list.append(res)
+        results_list = await asyncio.gather(
+            *(safe_search(s) for s in self.scrapers),
+            return_exceptions=False,
+        )
 
         all_products: List[ProductResult] = []
         for results in results_list:
