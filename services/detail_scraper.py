@@ -279,6 +279,23 @@ class DetailScraper:
         is_coupang = "coupang.com" in product_url
         logger.info(f"[{product_id}] Playwright 스텔스 캡처 시작: {product_url}")
 
+        # ★ bypass_engine으로 Akamai 쿠키 선획득 (쿠팡)
+        bypass_cookies_list = []
+        if is_coupang:
+            try:
+                from engine.bypass_engine import get_bypass_cookies
+                bypass_cookies = get_bypass_cookies(
+                    'https://www.coupang.com', protection='akamai'
+                )
+                for name, value in bypass_cookies.items():
+                    bypass_cookies_list.append({
+                        'name': name, 'value': value,
+                        'domain': '.coupang.com', 'path': '/',
+                    })
+                logger.debug(f"[{product_id}] bypass 쿠키 {len(bypass_cookies_list)}개 준비")
+            except Exception as _be:
+                logger.debug(f"[{product_id}] bypass_engine 생략: {_be}")
+
         launch_args = [
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
@@ -335,6 +352,14 @@ class DetailScraper:
                         },
                     )
 
+                # bypass_engine 쿠키 주입 (쿠팡 Akamai 우회)
+                if bypass_cookies_list:
+                    try:
+                        context.add_cookies(bypass_cookies_list)
+                        logger.debug(f"[{product_id}] bypass 쿠키 Playwright context 주입 완료")
+                    except Exception as _ce:
+                        logger.debug(f"[{product_id}] 쿠키 주입 실패: {_ce}")
+
                 page = context.new_page()
 
                 # ★ ProScraper 풀 스텔스 주입
@@ -361,6 +386,18 @@ class DetailScraper:
                     logger.warning(f"[{product_id}] goto 실패: {eg}")
 
                 time.sleep(random.uniform(3.0, 4.5))
+
+                # CAPTCHA 자동 해결 시도
+                try:
+                    from engine.captcha import get_solver
+                    solver = get_solver()
+                    if solver.available():
+                        solved = solver.auto_solve_page(page)
+                        if solved:
+                            logger.info(f"[{product_id}] CAPTCHA 자동 해결 완료")
+                            time.sleep(2.0)
+                except Exception:
+                    pass
 
                 content = page.content()
                 if _is_blocked(content):
