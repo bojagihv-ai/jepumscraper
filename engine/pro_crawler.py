@@ -37,6 +37,8 @@ import time
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+import config
+
 logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -231,16 +233,20 @@ class ProCrawler:
             }
 
         html = ""
+        browser = None
+        context = None
+        tmp_profile = ""
         with sync_playwright() as pw:
             try:
+                launch_args = self._launch_args()
                 launch_kwargs = {
                     "headless": True,
-                    "args": self._launch_args(),
+                    "args": launch_args,
                 }
                 if pw_proxy:
                     launch_kwargs["proxy"] = pw_proxy
 
-                browser = pw.chromium.launch(**launch_kwargs)
+                # Browser is launched after deciding whether to reuse a copied Chrome profile.
 
                 # 컨텍스트 옵션 (지역 신호 포함)
                 ctx_opts = {
@@ -259,7 +265,42 @@ class ProCrawler:
                         referer=referer
                     )
 
-                context = browser.new_context(**ctx_opts)
+                try:
+                    from engine.browser_profile import (
+                        chrome_profile_name,
+                        coupang_browser_profile_dir,
+                        copy_chrome_profile_tmp,
+                        use_user_browser_session,
+                    )
+                    is_coupang = (platform or "").lower() == "coupang" or "coupang.com" in urlparse(url).netloc
+                    if is_coupang and getattr(config, "COUPANG_USE_DEDICATED_PROFILE", True):
+                        profile_dir = coupang_browser_profile_dir()
+                        logger.info("[ProCrawler] Coupang dedicated Chrome profile: %s", profile_dir)
+                        context = pw.chromium.launch_persistent_context(
+                            user_data_dir=str(profile_dir),
+                            channel="chrome",
+                            headless=False,
+                            args=launch_args,
+                            **({"proxy": pw_proxy} if pw_proxy else {}),
+                            **ctx_opts,
+                        )
+                    elif use_user_browser_session():
+                        tmp_profile = copy_chrome_profile_tmp()
+                        if tmp_profile:
+                            context = pw.chromium.launch_persistent_context(
+                                user_data_dir=tmp_profile,
+                                channel="chrome",
+                                headless=False,
+                                args=launch_args + [f"--profile-directory={chrome_profile_name()}"],
+                                **({"proxy": pw_proxy} if pw_proxy else {}),
+                                **ctx_opts,
+                            )
+                except Exception as e:
+                    logger.debug(f"[ProCrawler] Chrome profile context skipped: {e}")
+
+                if context is None:
+                    browser = pw.chromium.launch(**launch_kwargs)
+                    context = browser.new_context(**ctx_opts)
 
                 # bypass + 지역 쿠키 주입
                 cookies_to_inject = self._build_playwright_cookies(url, extra_cookies)
@@ -333,7 +374,15 @@ class ProCrawler:
                 except Exception:
                     pass
 
-                browser.close()
+                context.close()
+                if browser:
+                    if context:
+                        context.close()
+                    if browser:
+                        browser.close()
+                if tmp_profile:
+                    import shutil
+                    shutil.rmtree(tmp_profile, ignore_errors=True)
 
             except Exception as e:
                 logger.error(f"[ProCrawler] Playwright 오류: {e}")
@@ -341,6 +390,9 @@ class ProCrawler:
                     browser.close()
                 except Exception:
                     pass
+                if tmp_profile:
+                    import shutil
+                    shutil.rmtree(tmp_profile, ignore_errors=True)
 
         return html
 

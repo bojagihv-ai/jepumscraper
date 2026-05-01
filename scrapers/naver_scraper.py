@@ -25,9 +25,10 @@ class NaverScraper(BaseScraper):
             "X-Naver-Client-Id": config.NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": config.NAVER_CLIENT_SECRET
         }
+        display_count = max(3, min(int(config.MAX_CANDIDATES), 100))
         params = {
             "query": search_query,
-            "display": max(15, config.MAX_CANDIDATES),
+            "display": display_count,
             "start": 1,
             "sort": "sim"
         }

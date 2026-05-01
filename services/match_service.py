@@ -1,6 +1,5 @@
 import logging
 from typing import List, Dict, Any
-from engines.image_analyzer import get_analyzer
 from engines.text_matcher import get_name_similarity
 import config
 import progress_store
@@ -9,7 +8,31 @@ logger = logging.getLogger(__name__)
 
 class MatchService:
     def __init__(self):
-        self.analyzer = get_analyzer()
+        if getattr(config, "ENABLE_CLIP_ANALYSIS", False):
+            from engines.image_analyzer import get_analyzer
+            self.analyzer = get_analyzer()
+        else:
+            self.analyzer = None
+
+    def _classify_without_clip(self, candidates: List[Any]) -> Dict[int, List[Any]]:
+        categorized = {1: [], 2: [], 3: [], 0: []}
+        ordered = sorted(
+            candidates,
+            key=lambda c: float(getattr(c, "similarity_score", 0) or 0),
+            reverse=True,
+        )
+        for idx, candidate in enumerate(ordered):
+            score = float(getattr(candidate, "similarity_score", 0) or 0)
+            if score >= 60:
+                candidate.match_tier = 2
+                categorized[2].append(candidate)
+            elif score >= 30:
+                candidate.match_tier = 3
+                categorized[3].append(candidate)
+            else:
+                candidate.match_tier = 0
+                categorized[0].append(candidate)
+        return categorized
         
     def classify_matches(self, source_image_path: str, source_name: str, candidates: List[Any]) -> Dict[int, List[Any]]:
         """
@@ -17,6 +40,9 @@ class MatchService:
         candidates는 ProductResult 객체의 리스트입니다.
         """
         logger.info(f"Classifying {len(candidates)} candidates against source image and name: {source_name}")
+        if self.analyzer is None:
+            progress_store.set_status("빠른 모드: 텍스트 점수로 후보 분류 중...")
+            return self._classify_without_clip(candidates)
         
         # 1. 소스 이미지 분석 (미리 계산)
         progress_store.set_status("검색하신 원본 이미지를 분석 중입니다...")

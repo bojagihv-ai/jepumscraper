@@ -13,15 +13,18 @@ scrapers/coupang_scraper.py — 쿠팡 스크래퍼 (ProCrawler 8신호 통합)
 """
 
 import asyncio
+import contextvars
 import hashlib
 import logging
 import os
 import random
 import re
+import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import List
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote_plus
 
 from bs4 import BeautifulSoup
 
@@ -35,6 +38,19 @@ logger = logging.getLogger(__name__)
 
 LOG_DIR = os.path.join(str(config.BASE_DIR), 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
+
+COUPANG_HOME_URL = "https://www.coupang.com/"
+COUPANG_SEARCH_SELECTORS = (
+    'input[name="q"]',
+    '#headerSearchKeyword',
+    'input[placeholder*="상품"]',
+    'input[type="search"]',
+    'input[type="text"]',
+)
+
+
+class PlatformBlocked(RuntimeError):
+    pass
 
 
 # ─── 유틸 ────────────────────────────────────────────────────────────────────
@@ -61,7 +77,393 @@ def _build_queries(keyword: str) -> List[str]:
     return queries
 
 
+def _looks_blocked(html: str) -> bool:
+    if not html:
+        return False
+    lowered = html.lower()
+    return (
+        'access denied' in lowered
+        or 'you don\'t have permission to access' in lowered
+        or 'captcha' in lowered
+        or 'verify you are human' in lowered
+    )
+
+
 # ─── HTML 파싱 ────────────────────────────────────────────────────────────────
+
+def _coupang_debug_port() -> int:
+    return int(getattr(config, "COUPANG_DEBUG_PORT", 9223) or 9223)
+
+
+def _find_autohotkey_exe() -> str:
+    configured = getattr(config, "AUTOHOTKEY_EXE", "") or os.getenv("AUTOHOTKEY_EXE", "")
+    candidates = [configured] if configured else []
+    candidates.extend([
+        r"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe",
+        r"C:\Program Files\AutoHotkey\v2\AutoHotkey.exe",
+        r"C:\Program Files\AutoHotkey\AutoHotkey64.exe",
+        r"C:\Program Files\AutoHotkey\AutoHotkey.exe",
+        r"C:\Program Files (x86)\AutoHotkey\AutoHotkey.exe",
+    ])
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return ""
+
+
+def _open_coupang_debug_home() -> bool:
+    if not getattr(config, "COUPANG_ASSISTED_CAPTURE", True):
+        return False
+    if _has_coupang_debug_page():
+        return True
+
+    try:
+        from engine.browser_profile import (
+            chrome_browser_path,
+            coupang_browser_profile_dir,
+            coupang_import_extension_dir,
+        )
+        chrome = chrome_browser_path()
+        if not chrome:
+            logger.warning("[Coupang] Chrome executable not found")
+            return False
+
+        profile_dir = coupang_browser_profile_dir()
+        extension_dir = coupang_import_extension_dir()
+        args = [
+            chrome,
+            f"--user-data-dir={profile_dir}",
+            "--profile-directory=Default",
+            f"--remote-debugging-port={_coupang_debug_port()}",
+            "--remote-allow-origins=*",
+        ]
+        if (extension_dir / "manifest.json").is_file():
+            args.extend([
+                f"--disable-extensions-except={extension_dir}",
+                f"--load-extension={extension_dir}",
+            ])
+        args.append(COUPANG_HOME_URL)
+        subprocess.Popen(args, close_fds=True)
+    except Exception as exc:
+        logger.warning("[Coupang] failed to open assisted Chrome: %s", exc)
+        return False
+
+    for _ in range(24):
+        time.sleep(0.5)
+        if _has_coupang_debug_page():
+            return True
+    return False
+
+
+def _activate_coupang_window() -> bool:
+    try:
+        import win32con
+        import win32gui
+
+        matches = []
+
+        def _cb(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+            if win32gui.GetClassName(hwnd) != "Chrome_WidgetWin_1":
+                return
+            title = win32gui.GetWindowText(hwnd) or ""
+            lowered = title.lower()
+            if "coupang" in lowered or "쿠팡" in title:
+                matches.append(hwnd)
+
+        win32gui.EnumWindows(_cb, None)
+        if not matches:
+            return False
+        hwnd = matches[0]
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(hwnd)
+        time.sleep(0.2)
+        return True
+    except Exception as exc:
+        logger.debug("[Coupang] window activation skipped: %s", exc)
+        return False
+
+
+def _focus_coupang_search_input(page) -> bool:
+    for selector in COUPANG_SEARCH_SELECTORS:
+        try:
+            locator = page.locator(selector).first
+            if locator.count() <= 0:
+                continue
+            locator.scroll_into_view_if_needed(timeout=1500)
+            locator.click(timeout=3000)
+            return True
+        except Exception:
+            try:
+                focused = page.evaluate(
+                    """selector => {
+                        const el = document.querySelector(selector);
+                        if (!el) return false;
+                        el.focus();
+                        if (typeof el.select === 'function') el.select();
+                        return true;
+                    }""",
+                    selector,
+                )
+                if focused:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _run_coupang_form_search(page, query: str) -> bool:
+    for selector in COUPANG_SEARCH_SELECTORS:
+        try:
+            locator = page.locator(selector).first
+            if locator.count() <= 0:
+                continue
+            locator.fill(query, timeout=3000)
+            time.sleep(0.15)
+            locator.press("Enter", timeout=3000)
+            logger.info("[Coupang] submitted search via browser form")
+            return True
+        except Exception as exc:
+            logger.debug("[Coupang] form search failed selector=%s error=%s", selector, exc)
+
+    try:
+        submitted = page.evaluate(
+            """query => {
+                const selectors = [
+                    'input[name="q"]',
+                    '#headerSearchKeyword',
+                    'input[placeholder*="상품"]',
+                    'input[type="search"]',
+                    'input[type="text"]'
+                ];
+                for (const selector of selectors) {
+                    const el = document.querySelector(selector);
+                    if (!el) continue;
+                    el.focus();
+                    el.value = query;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    const form = el.closest('form');
+                    if (form) {
+                        form.requestSubmit ? form.requestSubmit() : form.submit();
+                        return true;
+                    }
+                    el.dispatchEvent(new KeyboardEvent('keydown', {
+                        key: 'Enter',
+                        code: 'Enter',
+                        keyCode: 13,
+                        which: 13,
+                        bubbles: true
+                    }));
+                    return true;
+                }
+                return false;
+            }""",
+            query,
+        )
+        if submitted:
+            logger.info("[Coupang] submitted search via DOM form")
+            return True
+    except Exception as exc:
+        logger.debug("[Coupang] DOM form search failed: %s", exc)
+    return False
+
+
+def _set_clipboard_text(text: str):
+    try:
+        import win32clipboard
+        import win32con
+
+        old_text = ""
+        had_text = False
+        win32clipboard.OpenClipboard()
+        try:
+            try:
+                old_text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+                had_text = True
+            except Exception:
+                old_text = ""
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
+        finally:
+            win32clipboard.CloseClipboard()
+        return had_text, old_text
+    except Exception as exc:
+        logger.debug("[Coupang] clipboard set failed: %s", exc)
+        return None
+
+
+def _restore_clipboard_text(snapshot) -> None:
+    if snapshot is None:
+        return
+    try:
+        import win32clipboard
+        import win32con
+
+        had_text, old_text = snapshot
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            if had_text:
+                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, old_text)
+        finally:
+            win32clipboard.CloseClipboard()
+    except Exception as exc:
+        logger.debug("[Coupang] clipboard restore failed: %s", exc)
+
+
+def _run_coupang_ahk_search(query: str) -> bool:
+    if not getattr(config, "ENABLE_AHK_FALLBACK", True):
+        return False
+    exe = _find_autohotkey_exe()
+    if not exe:
+        return False
+
+    tools_dir = Path(config.BASE_DIR) / "tools"
+    v1_script = tools_dir / "coupang_search_v1.ahk"
+    v2_script = tools_dir / "coupang_search_v2.ahk"
+    scripts = [v2_script, v1_script] if "\\v2\\" in exe.lower() else [v1_script, v2_script]
+    for script in scripts:
+        if not script.exists():
+            continue
+        try:
+            completed = subprocess.run(
+                [exe, str(script), query],
+                timeout=12,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode == 0:
+                logger.info("[Coupang] submitted search via AHK: %s", script.name)
+                return True
+            logger.debug(
+                "[Coupang] AHK search failed script=%s rc=%s stderr=%s",
+                script.name,
+                completed.returncode,
+                completed.stderr,
+            )
+        except Exception as exc:
+            logger.debug("[Coupang] AHK search failed script=%s error=%s", script.name, exc)
+    return False
+
+
+def _run_coupang_pyautogui_search(query: str) -> bool:
+    try:
+        import pyautogui
+    except Exception as exc:
+        logger.debug("[Coupang] pyautogui unavailable: %s", exc)
+        return False
+
+    snapshot = _set_clipboard_text(query)
+    if snapshot is None:
+        return False
+    try:
+        pyautogui.PAUSE = 0.08
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.1)
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.15)
+        pyautogui.press("enter")
+        logger.info("[Coupang] submitted search via pyautogui")
+        return True
+    except Exception as exc:
+        logger.debug("[Coupang] pyautogui search failed: %s", exc)
+        return False
+    finally:
+        time.sleep(0.35)
+        _restore_clipboard_text(snapshot)
+
+
+def _run_coupang_ui_search(query: str) -> str:
+    if not query.strip():
+        return "unavailable"
+    if not _open_coupang_debug_home():
+        return "unavailable"
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return "unavailable"
+
+    debug_port = _coupang_debug_port()
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{debug_port}")
+            page = None
+            for context in browser.contexts:
+                for candidate in context.pages:
+                    if "coupang.com" in (candidate.url or ""):
+                        page = candidate
+                        break
+                if page:
+                    break
+            if not page:
+                context = browser.contexts[0] if browser.contexts else browser.new_context()
+                page = context.new_page()
+                page.goto(COUPANG_HOME_URL, wait_until="domcontentloaded", timeout=20000)
+
+            page.bring_to_front()
+            _activate_coupang_window()
+            if "coupang.com" not in (page.url or "") or "/np/search" in (page.url or ""):
+                page.goto(COUPANG_HOME_URL, wait_until="domcontentloaded", timeout=20000)
+                time.sleep(random.uniform(1.0, 1.8))
+
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5000)
+            except Exception:
+                pass
+
+            html = page.content()
+            if _looks_blocked(html):
+                browser.close()
+                return "blocked"
+
+            if not _focus_coupang_search_input(page):
+                browser.close()
+                return "unavailable"
+
+            submitted = _run_coupang_ahk_search(query)
+            if not submitted:
+                submitted = _run_coupang_form_search(page, query)
+            if not submitted:
+                submitted = _run_coupang_pyautogui_search(query)
+            if not submitted:
+                browser.close()
+                return "unavailable"
+
+            try:
+                page.wait_for_url("**/np/search**", timeout=15000)
+            except Exception:
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=8000)
+                except Exception:
+                    pass
+            time.sleep(random.uniform(2.0, 3.2))
+
+            current_url = page.url or ""
+            if "/np/search" not in current_url and _run_coupang_form_search(page, query):
+                try:
+                    page.wait_for_url("**/np/search**", timeout=15000)
+                except Exception:
+                    try:
+                        page.wait_for_load_state("domcontentloaded", timeout=8000)
+                    except Exception:
+                        pass
+                time.sleep(random.uniform(2.0, 3.2))
+
+            html = page.content()
+            if _looks_blocked(html):
+                browser.close()
+                return "blocked"
+            current_url = page.url or ""
+            browser.close()
+            return "submitted" if "/np/search" in current_url else "unavailable"
+    except Exception as exc:
+        logger.info("[Coupang] UI search unavailable: %s", exc)
+        return "unavailable"
+
 
 def _parse_coupang_html(html: str, max_count: int) -> List[ProductResult]:
     soup    = BeautifulSoup(html, 'html.parser')
@@ -171,6 +573,77 @@ def _parse_coupang_html(html: str, max_count: int) -> List[ProductResult]:
 
 # ─── ProCrawler 기반 검색 ────────────────────────────────────────────────────
 
+def _scrape_coupang_assisted_current_page(query: str, max_count: int) -> List[ProductResult]:
+    """Read the currently open, user-driven Coupang search tab via Chrome CDP.
+
+    This mode is intentionally user-assisted: the user opens/logs in/searches in
+    the dedicated Chrome profile, and the program only parses the page that is
+    already visible to the user.
+    """
+    if not getattr(config, "COUPANG_ASSISTED_CAPTURE", True):
+        return []
+    debug_port = int(getattr(config, "COUPANG_DEBUG_PORT", 9223) or 9223)
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return []
+
+    query_norm = re.sub(r"\s+", "", query).lower()
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{debug_port}")
+            pages = []
+            for context in browser.contexts:
+                pages.extend(context.pages)
+            for page in pages:
+                url = page.url or ""
+                if "coupang.com" not in url or "/np/search" not in url:
+                    continue
+                decoded_url = unquote_plus(url)
+                if query_norm and query_norm not in re.sub(r"\s+", "", decoded_url).lower():
+                    continue
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=3000)
+                except Exception:
+                    pass
+                html = page.content()
+                if _looks_blocked(html):
+                    logger.warning("[쿠팡] assisted current page is blocked")
+                    continue
+                results = _parse_coupang_html(html, max_count)
+                logger.info("[쿠팡] assisted current page → %d개", len(results))
+                if results:
+                    browser.close()
+                    return results
+            browser.close()
+    except Exception as exc:
+        logger.info("[쿠팡] assisted capture unavailable: %s", exc)
+    return []
+
+
+def _has_coupang_debug_page() -> bool:
+    if not getattr(config, "COUPANG_ASSISTED_CAPTURE", True):
+        return False
+    debug_port = int(getattr(config, "COUPANG_DEBUG_PORT", 9223) or 9223)
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return False
+
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{debug_port}")
+            for context in browser.contexts:
+                for page in context.pages:
+                    if "coupang.com" in (page.url or ""):
+                        browser.close()
+                        return True
+            browser.close()
+    except Exception:
+        return False
+    return False
+
+
 def _scrape_coupang_pro(query: str, max_count: int) -> List[ProductResult]:
     """
     ProCrawler로 쿠팡 검색 (8신호 통합).
@@ -198,10 +671,13 @@ def _scrape_coupang_pro(query: str, max_count: int) -> List[ProductResult]:
     )
 
     if resp and resp.ok:
-        results = _parse_coupang_html(resp.text, max_count)
-        logger.info(f'[쿠팡] SmartSession → {len(results)}개')
-        if results:
-            return results
+        if not _looks_blocked(resp.text):
+            results = _parse_coupang_html(resp.text, max_count)
+            logger.info(f'[쿠팡] SmartSession → {len(results)}개')
+            if results:
+                return results
+        else:
+            logger.warning('[쿠팡] SmartSession 차단 응답 감지')
 
     # Playwright 폴백
     logger.info(f'[쿠팡] Playwright 폴백: "{query}"')
@@ -212,6 +688,12 @@ def _scrape_coupang_pro(query: str, max_count: int) -> List[ProductResult]:
     )
     if not html:
         return []
+
+    if _looks_blocked(html):
+        dump = os.path.join(LOG_DIR, _safe_log_name('coupang_blocked', query))
+        with open(dump, 'w', encoding='utf-8') as f:
+            f.write(html)
+        raise PlatformBlocked('blocked: Coupang Access Denied')
 
     results = _parse_coupang_html(html, max_count)
     logger.info(f'[쿠팡] Playwright → {len(results)}개')
@@ -288,6 +770,10 @@ def _scrape_coupang_playwright_fallback(query: str, max_count: int) -> List[Prod
                     html = page.content()
                 except Exception: pass
 
+            if _looks_blocked(html):
+                browser.close()
+                raise PlatformBlocked('blocked: Coupang Access Denied')
+
             for _ in range(6):
                 page.mouse.wheel(0, random.randint(300, 600))
                 time.sleep(random.uniform(0.3, 0.6))
@@ -297,6 +783,8 @@ def _scrape_coupang_playwright_fallback(query: str, max_count: int) -> List[Prod
             results = _parse_coupang_html(html, max_count)
             logger.info(f'[쿠팡] 레거시 Playwright → {len(results)}개')
 
+    except PlatformBlocked:
+        raise
     except Exception as e:
         logger.error(f'[쿠팡] 레거시 Playwright 오류: {e}')
 
@@ -321,7 +809,29 @@ class CoupangScraper(BaseScraper):
             if len(all_results) >= config.MAX_CANDIDATES:
                 break
 
-            results = _scrape_coupang_pro(query, config.MAX_CANDIDATES)
+            results = _scrape_coupang_assisted_current_page(query, config.MAX_CANDIDATES)
+            if not results and getattr(config, "COUPANG_ASSISTED_CAPTURE", True):
+                ui_status = _run_coupang_ui_search(query)
+                logger.info("[Coupang] UI search status=%s query=%s", ui_status, query)
+                if ui_status == "submitted":
+                    results = _scrape_coupang_assisted_current_page(
+                        query,
+                        config.MAX_CANDIDATES,
+                    )
+                elif ui_status == "blocked":
+                    self.last_status = "blocked"
+                    self.last_error = "blocked: Coupang Access Denied"
+                    return []
+                else:
+                    self.last_status = "manual_required"
+                    self.last_error = (
+                        "Coupang assisted Chrome search could not be submitted. "
+                        "Open the dedicated Coupang Chrome window, confirm the page is usable, "
+                        "then run the search again."
+                    )
+                    return []
+            if not results and not getattr(config, "COUPANG_ASSISTED_CAPTURE", True):
+                results = _scrape_coupang_pro(query, config.MAX_CANDIDATES)
 
             for r in results:
                 if r.id not in seen_ids:
@@ -338,7 +848,15 @@ class CoupangScraper(BaseScraper):
 
     async def search(self, keyword: str) -> List[ProductResult]:
         loop    = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, self._scrape_sync, keyword)
+        self.last_status = ""
+        self.last_error = ""
+        try:
+            ctx = contextvars.copy_context()
+            results = await loop.run_in_executor(None, ctx.run, self._scrape_sync, keyword)
+        except PlatformBlocked as e:
+            self.last_status = "blocked"
+            self.last_error = str(e)
+            raise
 
         for res in results:
             if res.thumbnail_url:
@@ -349,4 +867,8 @@ class CoupangScraper(BaseScraper):
                 if ok:
                     res.local_thumbnail_path = local_path
 
+        if results:
+            self.last_status = "success"
+        elif not self.last_status:
+            self.last_status = "zero_result"
         return results

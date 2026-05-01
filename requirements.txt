@@ -9,6 +9,7 @@ requests
 python-dotenv
 numpy
 beautifulsoup4
+aiohttp
 fake_useragent
 lxml
 DrissionPage

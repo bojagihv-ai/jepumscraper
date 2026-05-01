@@ -1,262 +1,415 @@
-"""
-engine/ip_manager.py — IP 평판 + 프록시 로테이션
-────────────────────────────────────────────────────────────────────────────
-봇 탐지 우회 대상:
-  • IP 평판(IP Reputation)
-      - 데이터센터 IP = 봇 신호 → 주거용 프록시(residential) 우선
-      - 동일 IP 과다 요청 → IP 로테이션
-      - IP-국가 불일치 → 한국 IP 유지
-      - ASN 평판 점수 → 알려진 봇 ASN 회피
-
-기능:
-  ProxyManager  : 프록시 풀 관리 + 실패 블랙리스트
-  DirectMode    : 프록시 없이 직접 연결 (로컬 IP 사용)
-
-프록시 우선순위:
-  1. Residential (주거용) — 가장 신뢰도 높음
-  2. ISP (인터넷 서비스 제공업체 프록시)
-  3. Mobile (모바일 데이터)
-  4. Datacenter (데이터센터) — 최후 수단
-
-설정:
-  .env 파일에 PROXY_LIST=socks5://...,http://... 또는
-  PROXY_FILE=proxies.txt 로 프록시 목록 제공
-"""
-
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import hashlib
+import json
 import logging
 import os
-import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from threading import Lock
-from typing import Dict, List, Optional
-from urllib.parse import urlparse
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse, urlunparse
+
+import config
 
 logger = logging.getLogger(__name__)
 
-# ─── 프록시 실패 임계값 ───────────────────────────────────────────────────────
-MAX_FAILS   = 3          # 이 횟수 실패 시 블랙리스트
-BLACKLIST_TTL = 600      # 블랙리스트 유지 시간 (초)
-COOLDOWN    = 30         # 동일 프록시 재사용 쿨다운 (초)
+STATE_PATH = Path(config.DATA_DIR) / "proxy_profiles_state.json"
+DEFAULT_HEALTH_URL = "https://api.ipify.org?format=json"
 
-# ─── ASN 블랙리스트 (알려진 데이터센터/봇 ASN) ──────────────────────────────
-# 이 ASN에서 오는 IP는 봇 점수가 높아 차단 위험
-DATACENTER_ASNS = {
-    "AS14061",  # DigitalOcean
-    "AS16276",  # OVH
-    "AS14618",  # Amazon AWS
-    "AS15169",  # Google Cloud
-    "AS8075",   # Microsoft Azure
-    "AS13335",  # Cloudflare
-    "AS20473",  # Choopa/Vultr
-    "AS63949",  # Linode
-    "AS396982", # Google Cloud
+PLATFORM_POLICIES = {
+    "naver": {"mode": "direct_api"},
+    "elevenst": {"mode": "direct_preferred"},
+    "gmarket": {"mode": "direct_preferred"},
+    "coupang": {"mode": "cautious", "blocked_cooldown_sec": 1800},
+    "auction": {"mode": "cautious", "blocked_cooldown_sec": 1800},
 }
+
+_ACTIVE_SELECTION: contextvars.ContextVar["ProxySelection | None"] = contextvars.ContextVar(
+    "jepum_proxy_selection",
+    default=None,
+)
 
 
 @dataclass
-class Proxy:
-    """단일 프록시 항목."""
-    url: str                         # 예: socks5://user:pass@host:port
-    proxy_type: str = "unknown"      # residential|isp|mobile|datacenter|unknown
-    country: str    = "KR"
-    fail_count: int = 0
-    blacklisted_until: float = 0.0
-    last_used: float = 0.0
-    success_count: int = 0
+class ProxyProfile:
+    id: str
+    name: str
+    proxy_url: str
+    enabled: bool = True
+    proxy_type: str = "unknown"
+    country: str = "KR"
+    allowed_platforms: List[str] = field(default_factory=list)
+    chrome_user_data_dir: str = ""
+    chrome_profile_directory: str = ""
+
+    attempts: int = 0
+    successes: int = 0
+    failures: int = 0
+    consecutive_failures: int = 0
+    total_duration_ms: int = 0
+    last_status: str = ""
+    last_error: str = ""
+    last_ip: str = ""
+    last_checked_at: str = ""
+    last_used_at: float = 0.0
+    cooldown_until: float = 0.0
+
+    @property
+    def success_rate(self) -> float:
+        return self.successes / self.attempts if self.attempts else 0.0
+
+    @property
+    def avg_duration_ms(self) -> float:
+        return self.total_duration_ms / self.attempts if self.attempts else 0.0
+
+    @property
+    def cooldown_active(self) -> bool:
+        return time.time() < self.cooldown_until
 
     @property
     def host(self) -> str:
-        return urlparse(self.url).hostname or ""
+        return urlparse(self.proxy_url).hostname or ""
 
-    @property
-    def is_blacklisted(self) -> bool:
-        return self.fail_count >= MAX_FAILS and time.time() < self.blacklisted_until
+    def allows(self, platform: str) -> bool:
+        if not self.allowed_platforms:
+            return True
+        return normalize_platform(platform) in {normalize_platform(p) for p in self.allowed_platforms}
 
-    @property
-    def is_cooling(self) -> bool:
-        return time.time() - self.last_used < COOLDOWN
-
-    @property
-    def score(self) -> float:
-        """높을수록 좋은 프록시."""
+    def score(self, platform: str) -> float:
         type_score = {
-            "residential": 10.0,
-            "mobile":      8.0,
-            "isp":         6.0,
-            "datacenter":  2.0,
-            "unknown":     4.0,
-        }.get(self.proxy_type, 4.0)
-        fail_penalty  = self.fail_count * 2.0
-        success_bonus = min(self.success_count * 0.3, 5.0)
-        return type_score - fail_penalty + success_bonus
+            "residential": 25.0,
+            "isp": 20.0,
+            "mobile": 18.0,
+            "datacenter": 6.0,
+            "unknown": 12.0,
+        }.get(self.proxy_type, 12.0)
+        platform_bonus = 8.0 if self.allows(platform) else -100.0
+        success_bonus = min(35.0, self.success_rate * 35.0)
+        duration_penalty = min(15.0, self.avg_duration_ms / 2000.0)
+        failure_penalty = min(35.0, self.consecutive_failures * 12.0 + self.failures * 1.5)
+        cooldown_penalty = 1000.0 if self.cooldown_active else 0.0
+        return type_score + platform_bonus + success_bonus - duration_penalty - failure_penalty - cooldown_penalty
 
-    def on_fail(self):
-        self.fail_count += 1
-        if self.fail_count >= MAX_FAILS:
-            self.blacklisted_until = time.time() + BLACKLIST_TTL
-            logger.warning(f"[ProxyManager] 블랙리스트: {self.host} ({BLACKLIST_TTL}s)")
+    def public_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data["proxy_url"] = mask_proxy_url(self.proxy_url)
+        data["success_rate"] = round(self.success_rate, 3)
+        data["avg_duration_ms"] = round(self.avg_duration_ms, 1)
+        data["cooldown_active"] = self.cooldown_active
+        data["cooldown_until_epoch"] = self.cooldown_until
+        return data
 
-    def on_success(self):
-        self.fail_count = max(0, self.fail_count - 1)
-        self.success_count += 1
-        self.last_used = time.time()
+
+@dataclass
+class ProxySelection:
+    profile: Optional[ProxyProfile]
+    platform: str = ""
+    stage: str = "search"
+
+    @property
+    def proxy_url(self) -> str:
+        return self.profile.proxy_url if self.profile else ""
+
+    @property
+    def profile_id(self) -> str:
+        return self.profile.id if self.profile else "direct"
+
+    @property
+    def mode(self) -> str:
+        return "proxy" if self.profile else "direct"
+
+    def metadata(self) -> Dict[str, Any]:
+        return {
+            "proxy_mode": self.mode,
+            "proxy_profile_id": self.profile_id,
+            "proxy_name": self.profile.name if self.profile else "direct",
+            "proxy_host": self.profile.host if self.profile else "",
+        }
+
+
+def normalize_platform(value: str = "") -> str:
+    text = (value or "").lower()
+    if "coupang" in text or "쿠팡" in text:
+        return "coupang"
+    if "auction" in text or "옥션" in text:
+        return "auction"
+    if "gmarket" in text or "g마켓" in text:
+        return "gmarket"
+    if "11st" in text or "11번가" in text or "eleven" in text:
+        return "elevenst"
+    if "naver" in text or "네이버" in text or "smartstore" in text:
+        return "naver"
+    return text.strip() or "unknown"
+
+
+def mask_proxy_url(proxy_url: str) -> str:
+    if not proxy_url:
+        return ""
+    parsed = urlparse(proxy_url)
+    netloc = parsed.netloc
+    if "@" in netloc:
+        auth, host = netloc.rsplit("@", 1)
+        username = auth.split(":", 1)[0]
+        netloc = f"{username}:***@{host}"
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
+
+def playwright_proxy(proxy_url: str) -> Optional[Dict[str, str]]:
+    if not proxy_url:
+        return None
+    parsed = urlparse(proxy_url)
+    if not parsed.scheme or not parsed.hostname:
+        return None
+    data = {"server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 80}"}
+    if parsed.username:
+        data["username"] = parsed.username
+    if parsed.password:
+        data["password"] = parsed.password
+    return data
+
+
+def _profile_id(proxy_url: str, name: str = "") -> str:
+    digest = hashlib.sha1(proxy_url.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    prefix = "".join(ch for ch in (name or "proxy").lower() if ch.isalnum())[:16] or "proxy"
+    return f"{prefix}_{digest}"
+
+
+def _infer_type(value: str) -> str:
+    lower = value.lower()
+    if "residential" in lower or "resi" in lower:
+        return "residential"
+    if "mobile" in lower:
+        return "mobile"
+    if "isp" in lower:
+        return "isp"
+    if "datacenter" in lower or "dc" in lower:
+        return "datacenter"
+    return "unknown"
 
 
 class ProxyManager:
-    """
-    프록시 풀 관리 + 자동 로테이션.
-
-    사용법:
-        pm = ProxyManager()
-        proxy_url = pm.get()          # 최적 프록시 반환
-        pm.on_fail(proxy_url)         # 실패 보고
-        pm.on_success(proxy_url)      # 성공 보고
-    """
-
     def __init__(self):
-        self._proxies: List[Proxy] = []
-        self._lock    = Lock()
-        self._load_from_env()
-        self._direct_mode = len(self._proxies) == 0
+        self._lock = Lock()
+        self._profiles: Dict[str, ProxyProfile] = {}
+        self._load_profiles()
+        self._load_state()
 
-    # ── 외부 API ──────────────────────────────────────────────
+    def select(self, platform: str = "", stage: str = "search") -> ProxySelection:
+        platform_key = normalize_platform(platform)
+        if not bool(getattr(config, "ENABLE_PROXY_PROFILES", False)):
+            return ProxySelection(None, platform_key, stage)
 
-    def get(self, require_type: Optional[str] = None) -> Optional[str]:
-        """
-        사용 가능한 최적 프록시 URL을 반환한다.
-        프록시가 없으면 None (직접 연결).
-        """
-        if self._direct_mode:
-            return None
+        policy = PLATFORM_POLICIES.get(platform_key, {})
+        if policy.get("mode") == "direct_api":
+            return ProxySelection(None, platform_key, stage)
 
         with self._lock:
             candidates = [
-                p for p in self._proxies
-                if not p.is_blacklisted and not p.is_cooling
+                p for p in self._profiles.values()
+                if p.enabled and p.proxy_url and p.allows(platform_key) and not p.cooldown_active
             ]
-            if require_type:
-                typed = [p for p in candidates if p.proxy_type == require_type]
-                if typed:
-                    candidates = typed
-
             if not candidates:
-                # 쿨다운 무시하고 블랙리스트 아닌 것
-                candidates = [p for p in self._proxies if not p.is_blacklisted]
+                logger.info("[ProxyManager] usable proxy profile not found for %s; direct mode", platform_key)
+                return ProxySelection(None, platform_key, stage)
 
-            if not candidates:
-                logger.warning("[ProxyManager] 사용 가능한 프록시 없음")
-                return None
+            chosen = max(candidates, key=lambda p: p.score(platform_key))
+            chosen.last_used_at = time.time()
+            self._save_state_locked()
+            logger.info("[ProxyManager] %s uses profile %s (%s)", platform_key, chosen.name, chosen.host)
+            return ProxySelection(chosen, platform_key, stage)
 
-            # 점수 기반 가중치 랜덤 선택
-            scores  = [p.score for p in candidates]
-            total   = sum(scores)
-            weights = [s / total for s in scores]
-            chosen  = random.choices(candidates, weights=weights, k=1)[0]
-            chosen.last_used = time.time()
-            return chosen.url
-
-    def get_residential(self) -> Optional[str]:
-        """주거용 프록시를 우선 반환."""
-        return self.get(require_type="residential") or self.get()
-
-    def on_fail(self, proxy_url: str):
-        """프록시 실패 보고."""
+    def record_result(
+        self,
+        selection: ProxySelection | None,
+        *,
+        platform: str = "",
+        status: str = "",
+        success: bool = False,
+        duration_ms: int = 0,
+        error: str = "",
+        public_ip: str = "",
+    ) -> None:
+        if not selection or not selection.profile:
+            return
+        platform_key = normalize_platform(platform or selection.platform)
         with self._lock:
-            for p in self._proxies:
-                if p.url == proxy_url:
-                    p.on_fail()
-                    break
+            profile = self._profiles.get(selection.profile.id)
+            if not profile:
+                return
+            profile.attempts += 1
+            profile.total_duration_ms += int(duration_ms or 0)
+            profile.last_status = status
+            profile.last_error = error
+            if public_ip:
+                profile.last_ip = public_ip
+            if success:
+                profile.successes += 1
+                profile.consecutive_failures = 0
+                profile.cooldown_until = 0.0
+            else:
+                profile.failures += 1
+                profile.consecutive_failures += 1
+                if status in {"blocked", "captcha", "throttled", "login_required", "timeout"}:
+                    cooldown = PLATFORM_POLICIES.get(platform_key, {}).get("blocked_cooldown_sec", 900)
+                    profile.cooldown_until = max(profile.cooldown_until, time.time() + float(cooldown))
+            self._save_state_locked()
 
-    def on_success(self, proxy_url: str):
-        """프록시 성공 보고."""
+    def health_check(self, profile_id: str = "") -> Dict[str, Any]:
+        profiles: Iterable[ProxyProfile]
         with self._lock:
-            for p in self._proxies:
-                if p.url == proxy_url:
-                    p.on_success()
-                    break
+            profiles = [self._profiles[profile_id]] if profile_id and profile_id in self._profiles else list(self._profiles.values())
+        results = []
+        for profile in profiles:
+            results.append(self._check_one(profile))
+        return {"ok": all(r.get("ok") for r in results) if results else True, "results": results}
 
-    def add(self, url: str, proxy_type: str = "unknown", country: str = "KR"):
-        """프록시를 풀에 추가한다."""
+    def summary(self) -> Dict[str, Any]:
         with self._lock:
-            if not any(p.url == url for p in self._proxies):
-                self._proxies.append(Proxy(url=url, proxy_type=proxy_type, country=country))
-                self._direct_mode = False
-                logger.debug(f"[ProxyManager] 프록시 추가: {urlparse(url).hostname}")
+            profiles = [p.public_dict() for p in self._profiles.values()]
+        return {
+            "enabled": bool(getattr(config, "ENABLE_PROXY_PROFILES", False)),
+            "profile_count": len(profiles),
+            "profiles": profiles,
+            "policies": PLATFORM_POLICIES,
+            "health_check_url": getattr(config, "PROXY_HEALTH_CHECK_URL", DEFAULT_HEALTH_URL),
+        }
 
-    @property
-    def is_direct(self) -> bool:
-        return self._direct_mode
+    def _check_one(self, profile: ProxyProfile) -> Dict[str, Any]:
+        started = time.monotonic()
+        try:
+            import requests
+            response = requests.get(
+                getattr(config, "PROXY_HEALTH_CHECK_URL", DEFAULT_HEALTH_URL),
+                proxies={"http": profile.proxy_url, "https": profile.proxy_url},
+                timeout=float(getattr(config, "PROXY_HEALTH_TIMEOUT_SEC", 8)),
+            )
+            duration_ms = int((time.monotonic() - started) * 1000)
+            response.raise_for_status()
+            payload = response.json() if "json" in response.headers.get("content-type", "") else {}
+            public_ip = payload.get("ip") or response.text.strip()[:80]
+            self.record_result(
+                ProxySelection(profile, "health", "health_check"),
+                platform="health",
+                status="health_ok",
+                success=True,
+                duration_ms=duration_ms,
+                public_ip=public_ip,
+            )
+            profile.last_checked_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+            return {
+                "ok": True,
+                "profile_id": profile.id,
+                "name": profile.name,
+                "public_ip": public_ip,
+                "duration_ms": duration_ms,
+            }
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            self.record_result(
+                ProxySelection(profile, "health", "health_check"),
+                platform="health",
+                status="health_error",
+                success=False,
+                duration_ms=duration_ms,
+                error=str(exc),
+            )
+            return {
+                "ok": False,
+                "profile_id": profile.id,
+                "name": profile.name,
+                "error": str(exc),
+                "duration_ms": duration_ms,
+            }
 
-    @property
-    def available_count(self) -> int:
-        return len([p for p in self._proxies if not p.is_blacklisted])
+    def _load_profiles(self) -> None:
+        raw_profiles = list(getattr(config, "PROXY_PROFILES", []) or [])
+        env_list = os.environ.get("PROXY_LIST", "")
+        if env_list:
+            for item in env_list.split(","):
+                proxy_url = item.strip()
+                if proxy_url:
+                    raw_profiles.append({"name": urlparse(proxy_url).hostname or "env_proxy", "proxy_url": proxy_url})
 
-    # ── 환경 변수에서 로드 ────────────────────────────────────
-
-    def _load_from_env(self):
-        # PROXY_LIST=socks5://...,http://...
-        proxy_list = os.environ.get("PROXY_LIST", "")
-        if proxy_list:
-            for url in proxy_list.split(","):
-                url = url.strip()
-                if url:
-                    ptype = self._infer_type(url)
-                    self.add(url, proxy_type=ptype)
-
-        # PROXY_FILE=proxies.txt (한 줄에 URL 하나, # 주석 지원)
-        proxy_file = os.environ.get("PROXY_FILE", "")
-        if proxy_file and Path(proxy_file).exists():
-            for line in Path(proxy_file).read_text(encoding='utf-8').splitlines():
+        env_file = os.environ.get("PROXY_FILE", "")
+        if env_file and Path(env_file).exists():
+            for line in Path(env_file).read_text(encoding="utf-8").splitlines():
                 line = line.strip()
-                if line and not line.startswith("#"):
-                    parts = line.split()
-                    url   = parts[0]
-                    ptype = parts[1] if len(parts) > 1 else self._infer_type(url)
-                    self.add(url, proxy_type=ptype)
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                raw_profiles.append({
+                    "name": urlparse(parts[0]).hostname or "file_proxy",
+                    "proxy_url": parts[0],
+                    "proxy_type": parts[1] if len(parts) > 1 else _infer_type(parts[0]),
+                })
 
-        if self._proxies:
-            logger.info(f"[ProxyManager] {len(self._proxies)}개 프록시 로드됨")
+        for raw in raw_profiles:
+            proxy_url = str(raw.get("proxy_url") or raw.get("url") or "").strip()
+            if not proxy_url:
+                continue
+            name = str(raw.get("name") or urlparse(proxy_url).hostname or "proxy")
+            profile = ProxyProfile(
+                id=str(raw.get("id") or _profile_id(proxy_url, name)),
+                name=name,
+                proxy_url=proxy_url,
+                enabled=bool(raw.get("enabled", True)),
+                proxy_type=str(raw.get("proxy_type") or _infer_type(f"{name} {proxy_url}")),
+                country=str(raw.get("country") or "KR"),
+                allowed_platforms=[normalize_platform(p) for p in raw.get("allowed_platforms", [])],
+                chrome_user_data_dir=str(raw.get("chrome_user_data_dir") or ""),
+                chrome_profile_directory=str(raw.get("chrome_profile_directory") or ""),
+            )
+            self._profiles[profile.id] = profile
+
+        if self._profiles:
+            logger.info("[ProxyManager] %d proxy profile(s) loaded", len(self._profiles))
         else:
-            logger.info("[ProxyManager] 프록시 없음 → 직접 연결 모드")
+            logger.info("[ProxyManager] no proxy profile; direct mode")
 
-    @staticmethod
-    def _infer_type(url: str) -> str:
-        lower = url.lower()
-        if "resi" in lower or "residential" in lower:
-            return "residential"
-        if "mobile" in lower:
-            return "mobile"
-        if "isp" in lower:
-            return "isp"
-        if "dc" in lower or "datacenter" in lower:
-            return "datacenter"
-        return "unknown"
+    def _load_state(self) -> None:
+        if not STATE_PATH.exists():
+            return
+        try:
+            state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.debug("[ProxyManager] state load failed: %s", exc)
+            return
+        for profile_id, saved in state.items():
+            profile = self._profiles.get(profile_id)
+            if not profile:
+                continue
+            for key in (
+                "attempts", "successes", "failures", "consecutive_failures",
+                "total_duration_ms", "last_status", "last_error", "last_ip",
+                "last_checked_at", "last_used_at", "cooldown_until",
+            ):
+                if key in saved:
+                    setattr(profile, key, saved[key])
 
+    def _save_state_locked(self) -> None:
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            profile_id: {
+                "attempts": p.attempts,
+                "successes": p.successes,
+                "failures": p.failures,
+                "consecutive_failures": p.consecutive_failures,
+                "total_duration_ms": p.total_duration_ms,
+                "last_status": p.last_status,
+                "last_error": p.last_error,
+                "last_ip": p.last_ip,
+                "last_checked_at": p.last_checked_at,
+                "last_used_at": p.last_used_at,
+                "cooldown_until": p.cooldown_until,
+            }
+            for profile_id, p in self._profiles.items()
+        }
+        STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# ─── IP 평판 체크 (간단 버전) ────────────────────────────────────────────────
-
-def check_ip_is_datacenter(ip: str) -> bool:
-    """
-    IP가 데이터센터 IP인지 간단히 확인한다.
-    실제 환경에서는 ipinfo.io나 ip-api.com API 사용 권장.
-    """
-    try:
-        import requests
-        resp = requests.get(
-            f"http://ip-api.com/json/{ip}?fields=org,hosting",
-            timeout=5,
-        )
-        data = resp.json()
-        return data.get("hosting", False)
-    except Exception:
-        return False
-
-
-# ─── 전역 싱글톤 ─────────────────────────────────────────────────────────────
 
 _MANAGER: Optional[ProxyManager] = None
 
@@ -268,6 +421,51 @@ def get_manager() -> ProxyManager:
     return _MANAGER
 
 
-def get_proxy() -> Optional[str]:
-    """간편 API: 최적 프록시 URL 반환 (없으면 None)."""
-    return get_manager().get()
+def reload_manager() -> ProxyManager:
+    global _MANAGER
+    _MANAGER = ProxyManager()
+    return _MANAGER
+
+
+@contextlib.contextmanager
+def use_proxy_for(platform: str, stage: str = "search"):
+    selection = get_manager().select(platform, stage)
+    token = _ACTIVE_SELECTION.set(selection)
+    try:
+        yield selection
+    finally:
+        _ACTIVE_SELECTION.reset(token)
+
+
+def get_active_selection() -> ProxySelection:
+    return _ACTIVE_SELECTION.get() or ProxySelection(None)
+
+
+def get_proxy(platform: str = "") -> Optional[str]:
+    active = _ACTIVE_SELECTION.get()
+    if active is not None:
+        return active.proxy_url or None
+    selection = get_manager().select(platform or "unknown")
+    return selection.proxy_url or None
+
+
+def get_playwright_proxy(platform: str = "") -> Optional[Dict[str, str]]:
+    return playwright_proxy(get_proxy(platform) or "")
+
+
+def record_active_result(
+    *,
+    platform: str = "",
+    status: str = "",
+    success: bool = False,
+    duration_ms: int = 0,
+    error: str = "",
+) -> None:
+    get_manager().record_result(
+        get_active_selection(),
+        platform=platform,
+        status=status,
+        success=success,
+        duration_ms=duration_ms,
+        error=error,
+    )

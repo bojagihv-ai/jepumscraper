@@ -12,6 +12,7 @@ import threading
 import time
 import webbrowser
 import subprocess
+import urllib.request
 import tkinter as tk
 from tkinter import ttk, font as tkfont
 import logging
@@ -43,6 +44,7 @@ class JepumScraperLauncher:
 
         self._flask_thread = None
         self._server_ready = False
+        self._server_failed = False
         self._build_ui()
 
     def _build_ui(self):
@@ -125,20 +127,34 @@ class JepumScraperLauncher:
 
             # 서버 준비 완료 신호 (0.5초 후 UI 업데이트)
             def _mark_ready():
-                time.sleep(0.5)
-                self._server_ready = True
-                self._set_status(f'✅ 서버 실행 중  http://{HOST}:{PORT}', '#60ff80')
-                self._log('서버 준비 완료! 브라우저 열기 버튼을 누르세요.')
-                self.root.after(0, lambda: self._progress.stop())
-                self.root.after(0, lambda: self._open_btn.configure(state='normal'))
-                # 자동으로 브라우저 열기
-                self.root.after(800, self._open_browser)
+                health_url = f'http://{HOST}:{PORT}/health'
+                deadline = time.time() + 20
+                while time.time() < deadline and not self._server_failed:
+                    try:
+                        with urllib.request.urlopen(health_url, timeout=0.6) as response:
+                            if response.status == 200:
+                                self._server_ready = True
+                                self._set_status(f'Server running: http://{HOST}:{PORT}', '#60ff80')
+                                self._log('Server ready. Opening browser.')
+                                self.root.after(0, lambda: self._progress.stop())
+                                self.root.after(0, lambda: self._open_btn.configure(state='normal'))
+                                self.root.after(800, self._open_browser)
+                                return
+                    except Exception:
+                        time.sleep(0.25)
+
+                if not self._server_failed:
+                    self._set_status('Server health check failed.', '#ff6060')
+                    self._log('Server did not respond to /health.')
+                    self.root.after(0, lambda: self._progress.stop())
+                return
 
             threading.Thread(target=_mark_ready, daemon=True).start()
 
             app.run(host=HOST, port=PORT, debug=False, use_reloader=False, threaded=True)
 
         except Exception as e:
+            self._server_failed = True
             self._set_status(f'❌ 서버 오류: {e}', '#ff6060')
             self._log(f'오류: {e}')
             self.root.after(0, lambda: self._progress.stop())

@@ -1,5 +1,6 @@
 import os
 import asyncio
+import contextvars
 import logging
 import random
 from typing import List
@@ -25,10 +26,26 @@ class GmarketScraper(BaseScraper):
         q = ' '.join(kws) if kws else keyword
         url = f"https://browse.gmarket.co.kr/search?keyword={quote_plus(q)}"
         results: List[ProductResult] = []
+        tmp_profile = ""
 
         co = ChromiumOptions()
         co.set_argument('--window-position=-32000,-32000')
         co.set_argument('--mute-audio')
+        try:
+            from engine.ip_manager import get_proxy
+            proxy_url = get_proxy("gmarket")
+            if proxy_url:
+                co.set_argument(f'--proxy-server={proxy_url}')
+        except Exception as e:
+            logger.debug(f"[Gmarket] proxy skipped: {e}")
+        try:
+            from engine.browser_profile import chrome_profile_name, copy_chrome_profile_tmp
+            tmp_profile = copy_chrome_profile_tmp()
+            if tmp_profile:
+                co.set_user_data_path(tmp_profile)
+                co.set_user(chrome_profile_name())
+        except Exception as e:
+            logger.debug(f"[Gmarket] Chrome profile context skipped: {e}")
         paths = [
             r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
@@ -116,12 +133,19 @@ class GmarketScraper(BaseScraper):
                     page.quit()
                 except:
                     pass
+            if tmp_profile:
+                try:
+                    import shutil
+                    shutil.rmtree(tmp_profile, ignore_errors=True)
+                except Exception:
+                    pass
 
         return results
 
     async def search(self, keyword: str) -> List[ProductResult]:
         loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, self._scrape_sync, keyword)
+        ctx = contextvars.copy_context()
+        results = await loop.run_in_executor(None, ctx.run, self._scrape_sync, keyword)
         
         for res in results:
             if res.thumbnail_url:

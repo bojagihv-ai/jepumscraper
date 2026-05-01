@@ -10,7 +10,15 @@ def download_image_sync(url: str, save_path: str) -> bool:
         if url.startswith('http'):
             # headers to bypass simple blocking
             headers = {'User-Agent': config.USER_AGENT_LIST[0]}
-            resp = requests.get(url, stream=True, timeout=10, headers=headers)
+            proxies = None
+            try:
+                from engine.ip_manager import get_proxy
+                proxy_url = get_proxy()
+                if proxy_url:
+                    proxies = {"http": proxy_url, "https": proxy_url}
+            except Exception:
+                proxies = None
+            resp = requests.get(url, stream=True, timeout=10, headers=headers, proxies=proxies)
             if resp.status_code == 200:
                 with open(save_path, 'wb') as f:
                     for chunk in resp.iter_content(1024):
@@ -36,6 +44,8 @@ class ProductResult:
 class BaseScraper:
     def __init__(self):
         self.platform_name = "Base"
+        self.last_status = ""
+        self.last_error = ""
 
     async def search(self, keyword: str) -> List[ProductResult]:
         """키워드로 상품을 검색하고 결과를 반환합니다."""

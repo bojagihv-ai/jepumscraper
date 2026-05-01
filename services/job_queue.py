@@ -7,6 +7,8 @@ import shutil
 from services.history_db import create_job, update_job_status, add_result
 from services.search_service import SearchService
 from services.detail_scraper import DetailScraper
+from services import adaptive_learning
+import progress_store
 import config
 
 logger = logging.getLogger(__name__)
@@ -56,7 +58,8 @@ class BackgroundJobQueue:
         detail_scraper = DetailScraper()
         
         # 2. 검색 실행
-        raw_results = await search_service.search_all_platforms(keyword, settings)
+        progress_store.set_status(f"작업 검색 시작: {keyword}", job_id)
+        raw_results = await search_service.search_all_platforms(keyword, settings, job_id=job_id)
         if not raw_results:
             update_job_status(job_id, 'completed', total_found=0, total_saved=0)
             return
@@ -75,7 +78,36 @@ class BackgroundJobQueue:
         for tier, tier_name in [(1, 'tier1'), (2, 'tier2')]:
             for p in categorized.get(tier_name, []):
                 # 상세페이지 캡처
-                res = await detail_scraper.capture_detail_page(p.product_url, p.id, slice_height=slice_height)
+                cached = adaptive_learning.get_detail_cache(p.product_url)
+                if cached:
+                    res = cached
+                    adaptive_learning.log_event(
+                        job_id=job_id,
+                        stage="detail_capture",
+                        platform=p.platform,
+                        method="cache",
+                        status="cache_hit",
+                        success=True,
+                        url=p.product_url,
+                        metadata={"product_id": p.id},
+                    )
+                else:
+                    progress_store.set_status(f"상세 캡처 중: {p.platform} - {p.title[:30]}", job_id)
+                    res = await detail_scraper.capture_detail_page(
+                        p.product_url,
+                        p.id,
+                        slice_height=slice_height,
+                        job_id=job_id,
+                        platform=p.platform,
+                    )
+                    if res.get("screenshots"):
+                        adaptive_learning.save_detail_cache(
+                            p.product_url,
+                            p.platform,
+                            p.id,
+                            res,
+                            res.get("status", "success"),
+                        )
                 detail_path = ''
                 if slice_height > 0 and "screenshots" in res and res["screenshots"]:
                     # 분할 모드라면 첫 번째 샷 경로, 추후 리스트를 DB에 문자열로 통째 저장할 수 있도록 수정
@@ -98,6 +130,7 @@ class BackgroundJobQueue:
                 
         # 5. 작업 상태 업데이트
         update_job_status(job_id, 'completed', total_found=total_found, total_saved=total_saved)
+        progress_store.set_status("작업 완료", job_id)
 
     def add_job(self, keyword, image_path, settings):
         """ 메인 스레드(Flask)에서 호출하는 작업 추가 메서드 """

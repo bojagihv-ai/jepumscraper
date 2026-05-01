@@ -281,6 +281,62 @@
     </div>
 
     <!-- 검색 보고서 패널 -->
+    <div id="coupangManualPanel"
+        style="margin-bottom: 1.5rem; background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.28); border-radius: 10px; padding: 1rem 1.25rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+            <div>
+                <strong>쿠팡 수동 가져오기</strong>
+                <div id="coupangManualStatus" style="margin-top:4px; color: var(--text-muted); font-size:0.86rem;">
+                    쿠팡 검색 결과 페이지에서 HTML을 가져오면 이 세션 결과에 합칩니다.
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn" type="button" onclick="openCoupangProfile()"
+                    style="background:#065f46; color:white; padding:8px 12px;">전용 Chrome 열기</button>
+                <button class="btn" type="button" onclick="copyCoupangConsoleCode()"
+                    style="background:#047857; color:white; padding:8px 12px;">콘솔 코드 복사</button>
+                <button class="btn" type="button" onclick="toggleCoupangPasteBox()"
+                    style="background:var(--surface-color); color:var(--text-main); border:1px solid var(--border-color); padding:8px 12px;">HTML 붙여넣기</button>
+            </div>
+        </div>
+        <div id="coupangPasteBox" style="display:none; margin-top:12px;">
+            <input id="coupangPageUrlInput" type="text" placeholder="쿠팡 검색 결과 URL"
+                style="width:100%; margin-bottom:8px; padding:8px; border-radius:6px; border:1px solid var(--border-color); background:#0f172a; color:var(--text-main);">
+            <textarea id="coupangHtmlInput" rows="6" placeholder="document.documentElement.outerHTML 또는 저장한 HTML"
+                style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border-color); background:#0f172a; color:var(--text-main); font-family:monospace;"></textarea>
+            <button class="btn btn-primary" type="button" onclick="importCoupangHtmlFromPaste()"
+                style="margin-top:8px; padding:8px 12px;">쿠팡 결과 합치기</button>
+        </div>
+    </div>
+
+    <div id="auctionManualPanel"
+        style="margin-bottom: 1.5rem; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.28); border-radius: 10px; padding: 1rem 1.25rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+            <div>
+                <strong>옥션 수동 가져오기</strong>
+                <div id="auctionManualStatus" style="margin-top:4px; color: var(--text-muted); font-size:0.86rem;">
+                    옥션 검색 결과 페이지에서 HTML을 가져오면 이 세션 결과에 합칩니다.
+                </div>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn" type="button" onclick="openAuctionProfile()"
+                    style="background:#b45309; color:white; padding:8px 12px;">전용 Chrome 열기</button>
+                <button class="btn" type="button" onclick="copyAuctionConsoleCode()"
+                    style="background:#d97706; color:white; padding:8px 12px;">콘솔 코드 복사</button>
+                <button class="btn" type="button" onclick="toggleAuctionPasteBox()"
+                    style="background:var(--surface-color); color:var(--text-main); border:1px solid var(--border-color); padding:8px 12px;">HTML 붙여넣기</button>
+            </div>
+        </div>
+        <div id="auctionPasteBox" style="display:none; margin-top:12px;">
+            <input id="auctionPageUrlInput" type="text" placeholder="옥션 검색 결과 URL"
+                style="width:100%; margin-bottom:8px; padding:8px; border-radius:6px; border:1px solid var(--border-color); background:#0f172a; color:var(--text-main);">
+            <textarea id="auctionHtmlInput" rows="6" placeholder="document.documentElement.outerHTML 또는 저장한 HTML"
+                style="width:100%; padding:8px; border-radius:6px; border:1px solid var(--border-color); background:#0f172a; color:var(--text-main); font-family:monospace;"></textarea>
+            <button class="btn btn-primary" type="button" onclick="importAuctionHtmlFromPaste()"
+                style="margin-top:8px; padding:8px 12px;">옥션 결과 합치기</button>
+        </div>
+    </div>
+
     {% if search_report and search_report.platforms %}
     <div id="reportPanel"
         style="margin-bottom: 2rem; background: linear-gradient(135deg, rgba(30,41,59,0.9), rgba(15,23,42,0.95)); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden;">
@@ -295,7 +351,7 @@
             </div>
             <span class="arrow" style="transition: transform 0.3s; display:inline-block;">▼</span>
         </div>
-        <div id="reportBody" style="padding: 1.5rem;">
+        <div id="reportBody" style="display: none; padding: 1.5rem;">
             <!-- 기본 정보 -->
             <div
                 style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
@@ -363,7 +419,7 @@
                                 pdata.final_count|default('—') }}</span>
                         </td>
                         <td style="padding: 8px 12px; font-size: 0.8rem; color: var(--danger-color);">{{
-                            pdata.error|default('없음') }}</td>
+                            pdata.error|default('없음', true) }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -377,24 +433,25 @@
     </style>
     {% endif %}
 
-    <!-- ── 유사도 상위 10개 섹션 ── -->
-    {% if top_candidates %}
+    <!-- ── 전체 검색 결과 섹션 ── -->
+    {% if all_candidates %}
     <div id="productContainer">
         <div class="section-title" style="color: #60a5fa;">
-            🏆 유사도 상위 10개
-            <span style="font-size:0.8rem; color: var(--text-muted); margin-left:8px;">최대 5개 선택 가능</span>
+            🏆 전체 검색 결과 {{ all_candidates|length }}개
+            <span style="font-size:0.8rem; color: var(--text-muted); margin-left:8px;">상위 10개는 순위 배지 표시 · 최대 5개 선택 가능</span>
         </div>
         <div class="candidates-grid">
-            {% for p in top_candidates %}
+            {% for p in all_candidates %}
+            {% set score = p.similarity_score|default(0, true)|float %}
             <div class="card tier-{{ p.match_tier }}" onclick="toggleSelection(this, '{{ p.id }}')" data-rank="{{ loop.index }}">
                 <!-- 순위 배지 -->
-                <div class="rank-badge">{{ loop.index }}위</div>
+                <div class="rank-badge">{% if loop.index <= 10 %}{{ loop.index }}위{% else %}#{{ loop.index }}{% endif %}</div>
                 <!-- 유사도 점수 배지 -->
                 <div class="score-badge
-                    {% if p.similarity_score >= 70 %}score-high
-                    {% elif p.similarity_score >= 40 %}score-mid
+                    {% if score >= 70 %}score-high
+                    {% elif score >= 40 %}score-mid
                     {% else %}score-low{% endif %}">
-                    {{ p.similarity_score }}점
+                    {{ score|round(1) }}점
                 </div>
                 <div class="checkbox-overlay"></div>
                 <img src="/api/thumbnail/{{ p.id }}" class="card-img" alt="{{ p.title }}" loading="lazy"
@@ -483,6 +540,12 @@
             </span>
         </div>
         <div>
+            {% if last_scraped_data %}
+            <button class="btn btn-primary" id="lastDetailViewerBtn" onclick="openViewer()"
+                style="margin-right:10px; background:#4f46e5; border:none;">
+                마지막 수집 이미지 보기
+            </button>
+            {% endif %}
             <button class="btn btn-primary" id="scrapeBtn" disabled onclick="startScraping()">
                 선택한 제품 상세페이지 따기 엑셀저장
             </button>
@@ -627,6 +690,22 @@
             border-top: 1px dashed rgba(255, 255, 255, 0.2);
         }
 
+        .viewer-loading,
+        .viewer-error {
+            min-height: 280px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+            color: #cbd5e1;
+            font-size: 0.95rem;
+        }
+
+        .viewer-error {
+            color: #fecaca;
+        }
+
         .tab-btn {
             background: transparent;
             border: 1px solid transparent;
@@ -702,6 +781,139 @@
         const selectedIds = new Set();
         const sessionId = "{{ session_id }}";
         const MAX_SELECTION = 5;
+        window.lastScrapedData = {{ last_scraped_data|tojson }};
+        window.excelDownloadUrl = {{ last_download_url|tojson }};
+        window.lastDetailSummary = {{ last_detail_summary|tojson }};
+
+        function setCoupangManualStatus(message, isError = false) {
+            const el = document.getElementById('coupangManualStatus');
+            if (!el) return;
+            el.textContent = message;
+            el.style.color = isError ? 'var(--danger-color)' : 'var(--text-muted)';
+        }
+
+        function toggleCoupangPasteBox() {
+            const box = document.getElementById('coupangPasteBox');
+            if (!box) return;
+            box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function openCoupangProfile() {
+            setCoupangManualStatus('쿠팡 전용 Chrome을 여는 중입니다...');
+            const response = await fetch('/api/coupang_profile/open', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                setCoupangManualStatus(data.error || '쿠팡 전용 Chrome 열기에 실패했습니다.', true);
+                return;
+            }
+            setCoupangManualStatus('쿠팡 전용 Chrome을 열었습니다. 그 창에서 직접 검색한 뒤 JepumScraper 검색을 다시 실행하거나 콘솔 코드 복사를 사용하세요.');
+        }
+
+        async function copyCoupangConsoleCode() {
+            const endpoint = `${location.origin}/api/coupang/import_html`;
+            const code = "(async()=>{const r=await fetch('" + endpoint + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:'" + sessionId + "',url:location.href,html:document.documentElement.outerHTML})});const d=await r.json();alert(d.ok?'쿠팡 '+d.imported+'개 가져옴':'쿠팡 가져오기 실패: '+(d.error||r.status));})();";
+            try {
+                await navigator.clipboard.writeText(code);
+                setCoupangManualStatus('콘솔 코드가 복사됐습니다. 쿠팡 검색 결과 탭의 개발자 콘솔에서 실행하세요.');
+            } catch (err) {
+                setCoupangManualStatus('클립보드 복사 실패: HTML 붙여넣기 방식으로 진행하세요.', true);
+            }
+        }
+
+        async function importCoupangHtml(payload) {
+            setCoupangManualStatus('쿠팡 결과를 가져오는 중입니다...');
+            const response = await fetch('/api/coupang/import_html', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                setCoupangManualStatus(data.error || '쿠팡 결과 가져오기에 실패했습니다.', true);
+                return;
+            }
+            setCoupangManualStatus(`쿠팡 ${data.imported}개를 가져왔습니다. 화면을 새로고침합니다.`);
+            window.location.href = data.redirect_url + '?t=' + Date.now();
+        }
+
+        async function importCoupangHtmlFromPaste() {
+            const html = document.getElementById('coupangHtmlInput').value || '';
+            const url = document.getElementById('coupangPageUrlInput').value || '';
+            if (html.trim().length < 1000) {
+                setCoupangManualStatus('붙여넣은 HTML이 너무 짧습니다.', true);
+                return;
+            }
+            await importCoupangHtml({ session_id: sessionId, url, html });
+        }
+
+        function setAuctionManualStatus(message, isError = false) {
+            const el = document.getElementById('auctionManualStatus');
+            if (!el) return;
+            el.textContent = message;
+            el.style.color = isError ? 'var(--danger-color)' : 'var(--text-muted)';
+        }
+
+        function toggleAuctionPasteBox() {
+            const box = document.getElementById('auctionPasteBox');
+            if (!box) return;
+            box.style.display = box.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function openAuctionProfile() {
+            setAuctionManualStatus('옥션 전용 Chrome을 여는 중입니다...');
+            const response = await fetch('/api/auction_profile/open', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                setAuctionManualStatus(data.error || '옥션 전용 Chrome 열기에 실패했습니다.', true);
+                return;
+            }
+            setAuctionManualStatus('옥션 전용 Chrome을 열었습니다. 검색 결과가 보이면 자동으로 가져옵니다.');
+        }
+
+        async function copyAuctionConsoleCode() {
+            const endpoint = `${location.origin}/api/auction/import_html`;
+            const code = "(async()=>{const r=await fetch('" + endpoint + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:'" + sessionId + "',url:location.href,html:document.documentElement.outerHTML})});const d=await r.json();alert(d.ok?'옥션 '+d.imported+'개 가져옴':'옥션 가져오기 실패: '+(d.error||r.status));})();";
+            try {
+                await navigator.clipboard.writeText(code);
+                setAuctionManualStatus('콘솔 코드가 복사됐습니다. 옥션 검색 결과 탭의 개발자 콘솔에서 실행하세요.');
+            } catch (err) {
+                setAuctionManualStatus('클립보드 복사 실패: HTML 붙여넣기 방식으로 진행하세요.', true);
+            }
+        }
+
+        async function importAuctionHtml(payload) {
+            setAuctionManualStatus('옥션 결과를 가져오는 중입니다...');
+            const response = await fetch('/api/auction/import_html', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (!response.ok || !data.ok) {
+                setAuctionManualStatus(data.error || '옥션 결과 가져오기에 실패했습니다.', true);
+                return;
+            }
+            setAuctionManualStatus(`옥션 ${data.imported}개를 가져왔습니다. 화면을 새로고침합니다.`);
+            window.location.href = data.redirect_url + '?t=' + Date.now();
+        }
+
+        async function importAuctionHtmlFromPaste() {
+            const html = document.getElementById('auctionHtmlInput').value || '';
+            const url = document.getElementById('auctionPageUrlInput').value || '';
+            if (html.trim().length < 1000) {
+                setAuctionManualStatus('붙여넣은 HTML이 너무 짧습니다.', true);
+                return;
+            }
+            await importAuctionHtml({ session_id: sessionId, url, html });
+        }
 
         let warningTimer = null;
 
@@ -771,6 +983,23 @@
             if (selectedIds.size === 0) return;
 
             document.getElementById('loadingOverlay').style.display = 'flex';
+            const loadingStatus = document.getElementById('loadingStatus');
+            let detailPolling = true;
+            const pollDetailProgress = async () => {
+                while (detailPolling) {
+                    try {
+                        const res = await fetch(`/api/progress?job_id=${encodeURIComponent(sessionId)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.status && loadingStatus) {
+                                loadingStatus.textContent = data.status;
+                            }
+                        }
+                    } catch (e) { }
+                    await new Promise(r => setTimeout(r, 1200));
+                }
+            };
+            pollDetailProgress();
 
             try {
                 const response = await fetch('/api/scrape_details', {
@@ -786,13 +1015,44 @@
                 });
 
                 const data = await response.json();
+                detailPolling = false;
 
                 if (response.ok) {
                     window.lastScrapedData = data.scraped_data; // 결과를 전역변수에 저장
                     window.excelDownloadUrl = data.download_url;
+                    const summary = data.detail_summary || {};
+                    const failedCount = Number(summary.failed || 0);
+                    const totalCount = Number(summary.total || selectedIds.size);
+                    const successCount = Number(
+                        summary.success !== undefined ? summary.success : Math.max(0, totalCount - failedCount)
+                    );
+                    const failedItems = Array.isArray(summary.failed_items) ? summary.failed_items : [];
+                    const isPartial = failedCount > 0;
+                    const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (ch) => ({
+                        '&': '&amp;',
+                        '<': '&lt;',
+                        '>': '&gt;',
+                        '"': '&quot;',
+                        "'": '&#39;'
+                    }[ch]));
+                    const failedHtml = isPartial ? `
+                        <div style="max-width:720px; margin-top:14px; padding:14px 16px; border:1px solid rgba(245,158,11,.45); background:rgba(245,158,11,.10); border-radius:8px; color:#f8fafc; text-align:left;">
+                            <div style="font-weight:700; color:#fbbf24; margin-bottom:8px;">실패 ${failedCount}개가 있습니다. 성공한 항목은 저장됐습니다.</div>
+                            <div style="display:grid; gap:6px; max-height:180px; overflow:auto; font-size:13px; line-height:1.45;">
+                                ${failedItems.map(item => `
+                                    <div>
+                                        <strong>${escapeHtml(item.platform || '플랫폼')}</strong>
+                                        <span>${escapeHtml(item.title || item.product_id || '')}</span>
+                                        <span style="color:#cbd5e1;">(${escapeHtml(item.status || 'failed')}${item.reason ? `: ${escapeHtml(item.reason)}` : ''})</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : '';
 
                     document.getElementById('loadingOverlay').innerHTML = `
-                        <h2 style="color: #10b981; margin-bottom: 20px;">완료되었습니다!</h2>
+                        <h2 style="color: ${isPartial ? '#f59e0b' : '#10b981'}; margin-bottom: 10px;">${isPartial ? `일부 완료: ${successCount}/${totalCount}개 성공` : '완료되었습니다!'}</h2>
+                        ${failedHtml}
                         <div style="display:flex; gap:15px; margin-top:20px;">
                             <button onclick="openViewer()" class="btn btn-primary" style="background:#4f46e5; border:none; padding:12px 24px;">수집된 이미지 보기 및 자르기</button>
                             <a href="${data.download_url}" class="btn btn-primary" style="text-decoration: none; background:#22c55e; border:none; padding:12px 24px;">엑셀 파일 다운로드</a>
@@ -804,6 +1064,7 @@
                     document.getElementById('loadingOverlay').style.display = 'none';
                 }
             } catch (error) {
+                detailPolling = false;
                 alert('서버와 통신할 수 없습니다.');
                 document.getElementById('loadingOverlay').style.display = 'none';
             }
@@ -825,6 +1086,7 @@
         }
 
         let currentViewedId = null;
+        let viewerRenderToken = 0;
 
         function renderViewerTabs() {
             const tabsContainer = document.getElementById('viewerTabs');
@@ -842,6 +1104,7 @@
         }
 
         function selectTab(pid) {
+            const renderToken = ++viewerRenderToken;
             currentViewedId = pid;
             const data = window.lastScrapedData[pid];
             if (!data) return;
@@ -853,23 +1116,15 @@
 
             // 내용 보여주기
             const body = document.getElementById('viewerBody');
-            body.innerHTML = '';
+            body.innerHTML = '<div class="viewer-loading">이미지 불러오는 중...</div>';
             document.getElementById('viewerTitle').textContent = data.title;
+            document.getElementById('viewerSub').textContent = '불러오는 중...';
 
             const paths = data.screenshots || [];
             const productUrl = data.product_url || '';
             const isNaver = productUrl.includes('naver.com') || productUrl.includes('smartstore');
 
-            // 해상도 확인을 위해 첫번째 이미지를 로드
-            if (paths.length > 0) {
-                const img = new Image();
-                img.onload = function () {
-                    let totalHeight = this.naturalHeight;
-                    if (paths.length > 1) totalHeight = "다건 분할됨";
-                    document.getElementById('viewerSub').textContent = `크기: ${this.naturalWidth} x ${totalHeight} px | 조각 수: ${paths.length}장`;
-                };
-                img.src = '/api/local_image?path=' + encodeURIComponent(paths[0]) + '&t=' + Date.now();
-            } else {
+            if (paths.length === 0) {
                 if (isNaver) {
                     document.getElementById('viewerSub').textContent = '네이버 보안 정책으로 자동 캡처 불가';
                     // 안내 + 브라우저 열기 버튼
@@ -885,16 +1140,53 @@
                         </div>`;
                 } else {
                     document.getElementById('viewerSub').textContent = '이미지 없음';
+                    body.innerHTML = '<div class="viewer-error">이미지 없음</div>';
                 }
+                return;
             }
 
-            if (paths.length > 0) {
-                paths.forEach(p => {
-                    const img = document.createElement('img');
-                    img.src = '/api/local_image?path=' + encodeURIComponent(p) + '&t=' + Date.now();
-                    body.appendChild(img);
-                });
-            }
+            body.innerHTML = '';
+            let firstImageLoaded = false;
+            paths.forEach((p, index) => {
+                const img = document.createElement('img');
+                img.alt = data.title || pid;
+                img.loading = index === 0 ? 'eager' : 'lazy';
+                img.decoding = 'async';
+                let retried = false;
+                const makeSrc = (retry = false) => '/api/local_image?path=' + encodeURIComponent(p) + '&t=' + Date.now() + (retry ? '&retry=1' : '');
+
+                img.onload = function () {
+                    if (renderToken !== viewerRenderToken) return;
+                    if (index === 0 && !firstImageLoaded) {
+                        firstImageLoaded = true;
+                        let totalHeight = this.naturalHeight;
+                        if (paths.length > 1) totalHeight = '다건 분할됨';
+                        document.getElementById('viewerSub').textContent = `크기: ${this.naturalWidth} x ${totalHeight} px | 조각 수: ${paths.length}장`;
+                    }
+                };
+
+                img.onerror = function () {
+                    if (renderToken !== viewerRenderToken) return;
+                    if (!retried) {
+                        retried = true;
+                        setTimeout(() => {
+                            if (renderToken === viewerRenderToken) img.src = makeSrc(true);
+                        }, 350);
+                        return;
+                    }
+                    img.remove();
+                    if (index === 0) {
+                        document.getElementById('viewerSub').textContent = '이미지 로드 실패';
+                    }
+                    const errorBox = document.createElement('div');
+                    errorBox.className = 'viewer-error';
+                    errorBox.textContent = '이미지를 불러오지 못했습니다. 다시 캡처하거나 현재 이미지 저장으로 확인해주세요.';
+                    body.appendChild(errorBox);
+                };
+
+                img.src = makeSrc(false);
+                body.appendChild(img);
+            });
 
             // 다운로드 버튼 연동
             document.getElementById('btnDownloadCurrent').onclick = () => {

@@ -4,13 +4,31 @@ import random
 import logging
 import re
 from typing import List
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, parse_qs, unquote, urlparse
 from playwright.async_api import async_playwright, TimeoutError as PwTimeout
 from scrapers.base_scraper import BaseScraper, ProductResult, download_image_sync
 import config
 from engines.text_matcher import extract_keywords
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_11st_href(href: str) -> str:
+    if not href:
+        return href
+    if href.startswith("//"):
+        href = "https:" + href
+    try:
+        parsed = urlparse(href)
+        params = parse_qs(parsed.query)
+        redirect = (params.get("redirect") or params.get("returnUrl") or params.get("returnURL") or [""])[0]
+        if redirect:
+            candidate = unquote(redirect)
+            if candidate.startswith("http") and "11st.co.kr" in candidate:
+                return candidate
+    except Exception:
+        pass
+    return href
 
 class ElevenstScraper(BaseScraper):
     def __init__(self):
@@ -26,14 +44,50 @@ class ElevenstScraper(BaseScraper):
         try:
             async with async_playwright() as p:
                 ua = random.choice(config.USER_AGENT_LIST)
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=['--disable-blink-features=AutomationControlled']
-                )
-                ctx = await browser.new_context(
-                    user_agent=ua,
-                    viewport={"width": 1920, "height": 1080}
-                )
+                browser = None
+                tmp_profile = ""
+                ctx = None
+                launch_args = ['--disable-blink-features=AutomationControlled']
+                pw_proxy = None
+                try:
+                    from engine.ip_manager import get_playwright_proxy
+                    pw_proxy = get_playwright_proxy("elevenst")
+                except Exception as e:
+                    logger.debug(f"[11st] proxy skipped: {e}")
+                try:
+                    from engine.browser_profile import (
+                        chrome_profile_name,
+                        copy_chrome_profile_tmp,
+                        use_user_browser_session,
+                    )
+                    if use_user_browser_session():
+                        tmp_profile = copy_chrome_profile_tmp()
+                        if tmp_profile:
+                            ctx = await p.chromium.launch_persistent_context(
+                                user_data_dir=tmp_profile,
+                                channel="chrome",
+                                headless=False,
+                                args=launch_args + [f"--profile-directory={chrome_profile_name()}"],
+                                **({"proxy": pw_proxy} if pw_proxy else {}),
+                                viewport={"width": 1920, "height": 1080},
+                                locale="ko-KR",
+                                timezone_id="Asia/Seoul",
+                            )
+                except Exception as e:
+                    logger.debug(f"[11st] Chrome profile context skipped: {e}")
+
+                if ctx is None:
+                    browser = await p.chromium.launch(
+                        headless=True,
+                        args=launch_args,
+                        **({"proxy": pw_proxy} if pw_proxy else {}),
+                    )
+                    ctx = await browser.new_context(
+                        user_agent=ua,
+                        viewport={"width": 1920, "height": 1080},
+                        locale="ko-KR",
+                        timezone_id="Asia/Seoul",
+                    )
                 await ctx.add_init_script(
                     "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"
                 )
@@ -70,6 +124,9 @@ class ElevenstScraper(BaseScraper):
                             href = await link_el.get_attribute('href') or ''
                         if href.startswith('//'):
                             href = 'https:' + href
+                        elif href.startswith('/'):
+                            href = 'https://www.11st.co.kr' + href
+                        href = _normalize_11st_href(href)
                         if not href:
                             continue
 
@@ -122,7 +179,17 @@ class ElevenstScraper(BaseScraper):
                         logger.debug(f"[11번가] 아이템 {idx} 파싱 오류: {e}")
                         continue
 
-                await browser.close()
+                await ctx.close()
+                if browser:
+                    await ctx.close()
+                    if browser:
+                        await browser.close()
+                    if tmp_profile:
+                        import shutil
+                        shutil.rmtree(tmp_profile, ignore_errors=True)
+                if tmp_profile:
+                    import shutil
+                    shutil.rmtree(tmp_profile, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"[11번가] 검색 오류: {e}")

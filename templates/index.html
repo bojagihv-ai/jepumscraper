@@ -683,6 +683,24 @@
 
     <!-- 메인 카드 -->
     <main class="main-card">
+        <div id="lastSessionBanner" style="display:none; margin-bottom:18px; padding:16px 18px;
+            background:linear-gradient(135deg,#1e2540,#252d4a); border:1px solid #3a4370;
+            border-radius:12px; align-items:center; gap:14px;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" stroke-width="2">
+                <path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/>
+            </svg>
+            <div style="flex:1; min-width:0;">
+                <div id="lastSessionMeta" style="font-size:0.78rem; color:#7a8099; margin-bottom:2px;">마지막 작업</div>
+                <div id="lastSessionName" style="font-size:0.95rem; font-weight:600; color:#e8eaf0;
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+            </div>
+            <button type="button" id="lastSessionBtn" onclick="goToLastSession()"
+                style="flex-shrink:0; padding:9px 18px; background:#6366f1; border:none;
+                border-radius:8px; color:#fff; font-size:0.88rem; font-weight:600; cursor:pointer;
+                white-space:nowrap;">
+                이어서 보기
+            </button>
+        </div>
         <form id="searchForm">
 
             <!-- 제품명 -->
@@ -773,26 +791,6 @@
                 <div id="autotestResult" style="display:none; margin-top:12px;"></div>
             </div>
 
-            <!-- 이전 결과 바로가기 배너 -->
-            <div id="lastSessionBanner" style="display:none; margin-top:14px; padding:14px 18px;
-                background:linear-gradient(135deg,#1e2540,#252d4a); border:1px solid #3a4370;
-                border-radius:12px; display:none; align-items:center; gap:14px;">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" stroke-width="2">
-                    <path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/>
-                </svg>
-                <div style="flex:1; min-width:0;">
-                    <div style="font-size:0.78rem; color:#7a8099; margin-bottom:2px;">마지막 검색 결과</div>
-                    <div id="lastSessionName" style="font-size:0.95rem; font-weight:600; color:#e8eaf0;
-                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                </div>
-                <button id="lastSessionBtn" onclick="goToLastSession()"
-                    style="flex-shrink:0; padding:8px 18px; background:#6366f1; border:none;
-                    border-radius:8px; color:#fff; font-size:0.88rem; font-weight:600; cursor:pointer;
-                    white-space:nowrap;">
-                    결과 보기 →
-                </button>
-            </div>
-
             <!-- 진행 단계 -->
             <div class="progress-area" id="progressArea">
                 <ul class="progress-steps">
@@ -819,6 +817,10 @@
             <h2>⚙️ 설정</h2>
             <p class="sub">검색할 플랫폼을 선택하고 API 키를 입력하세요. 저장 후 바로 반영됩니다.</p>
 
+            <div id="effectiveSettingsBox" style="margin:14px 0 22px; padding:12px 14px; background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.25); border-radius:10px; font-size:0.82rem; color:#bbf7d0; line-height:1.55;">
+                ?? ?? ???? ???? ?...
+            </div>
+
             <!-- 플랫폼 목록 -->
             <div class="settings-section">
                 <h3>쇼핑몰 플랫폼</h3>
@@ -842,6 +844,25 @@
                     <label style="font-size:0.85rem; color:#d1d5db;">비밀번호</label>
                     <input type="password" id="naver_pw" placeholder="네이버 비밀번호"
                         style="width:100%; padding:8px 12px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.9rem;">
+                </div>
+            </div>
+
+            <!-- 프록시 프로필 -->
+            <div class="settings-section">
+                <h3>프록시 프로필</h3>
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:0.86rem; color:#d1d5db;">
+                    <input type="checkbox" id="enable_proxy_profiles" style="accent-color:var(--primary);">
+                    허가된 프록시 프로필 사용
+                </label>
+                <p style="font-size:0.78rem; color:#9ca3af; margin-bottom:10px; line-height:1.5;">
+                    IP와 브라우저 프로필을 묶어 관리합니다. 차단/보안 확인이 발생하면 해당 프로필은 자동으로 cooldown 됩니다.
+                </p>
+                <textarea id="proxy_profiles_json" spellcheck="false"
+                    style="width:100%; min-height:120px; padding:10px 12px; background:#1e293b; border:1px solid #334155; border-radius:8px; color:#f1f5f9; font-family:Consolas,monospace; font-size:0.78rem;"
+                    placeholder='[{"name":"home-vpn","proxy_url":"http://user:pass@host:port","proxy_type":"residential","allowed_platforms":["gmarket","elevenst"],"chrome_profile_directory":"Profile 2"}]'></textarea>
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-top:8px;">
+                    <span id="proxyHealthSummary" style="font-size:0.78rem; color:#9ca3af;">프록시를 저장한 뒤 health check를 실행하세요.</span>
+                    <button type="button" class="btn-cancel" style="padding:7px 12px;" onclick="runProxyHealthCheck()">Health Check</button>
                 </div>
             </div>
 
@@ -942,6 +963,7 @@
             appSettings = await res.json();
             renderPlatformList();
             loadSliders();
+            loadEffectiveSettings();
         }
 
         function renderPlatformList() {
@@ -1024,6 +1046,38 @@
             const nl = appSettings.naver_login || {};
             document.getElementById('naver_id').value = nl.id || '';
             document.getElementById('naver_pw').value = nl.pw || '';
+            const proxyToggle = document.getElementById('enable_proxy_profiles');
+            const proxyJson = document.getElementById('proxy_profiles_json');
+            if (proxyToggle) proxyToggle.checked = !!appSettings.enable_proxy_profiles;
+            if (proxyJson) proxyJson.value = JSON.stringify(appSettings.proxy_profiles || [], null, 2);
+        }
+
+        async function loadEffectiveSettings() {
+            const box = document.getElementById('effectiveSettingsBox');
+            if (!box) return;
+            try {
+                const res = await fetch('/api/effective_settings');
+                if (!res.ok) throw new Error('failed');
+                const data = await res.json();
+                const policies = data.platform_policies || {};
+                const paused = Object.values(policies).filter(p => p.cooldown_active).map(p => p.platform);
+                const methods = data.detail_method_priority || {};
+                const proxy = data.proxy_manager || {};
+                const methodLine = Object.entries(methods)
+                    .map(([k, v]) => `${k}: ${(v || []).join(' > ')}`)
+                    .join('<br>');
+                box.innerHTML = `
+                    <strong>현재 자동 조정 상태</strong><br>
+                    후보 ${data.max_candidates_effective}개, 검색 동시성 ${data.search_concurrency_effective}, 상세 동시성 ${data.detail_capture_concurrency_effective}<br>
+                    쿠팡 우선 ${data.coupang_first_mode_effective ? 'ON' : 'OFF'} · 쿠팡 최소 후보 ${data.coupang_min_final_effective}개 · 화면 캡처 큐 ${data.screen_capture_queue_effective}개씩<br>
+                    지연 ${data.scraping_delay_min_effective}s~${data.scraping_delay_max_effective}s, 캐시 ${data.detail_cache_ttl_days}일<br>
+                    프록시 프로필: ${proxy.enabled ? '사용' : '미사용'} · ${proxy.profile_count || 0}개 등록<br>
+                    ${paused.length ? `<span style="color:#fca5a5">쿨다운 플랫폼: ${paused.join(', ')}</span><br>` : ''}
+                    <span style="color:#86efac">상세 캡처 방식 우선순위</span><br>${methodLine}
+                `;
+            } catch (e) {
+                box.textContent = '현재 자동 조정 상태를 불러오지 못했습니다.';
+            }
         }
 
         async function saveSettings() {
@@ -1045,6 +1099,14 @@
                     });
                 }
             }
+            let proxyProfiles = [];
+            try {
+                proxyProfiles = JSON.parse(document.getElementById('proxy_profiles_json').value || '[]');
+                if (!Array.isArray(proxyProfiles)) throw new Error('proxy_profiles must be an array');
+            } catch (e) {
+                showToast('프록시 JSON 형식이 올바르지 않습니다');
+                return;
+            }
             const body = {
                 platforms: plats,
                 api_keys: apiKeys,
@@ -1059,15 +1121,39 @@
                 },
                 max_candidates: parseInt(document.getElementById('sl_max').value),
                 slice_height: parseInt(document.getElementById('sl_slice').value),
+                enable_proxy_profiles: document.getElementById('enable_proxy_profiles').checked,
+                proxy_profiles: proxyProfiles,
             };
             const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (r.ok) {
                 appSettings = await (await fetch('/api/settings')).json();
                 renderPlatformList();
+                loadEffectiveSettings();
                 closeSettings();
                 showToast('&#10003; 설정이 저장되었습니다');
             } else {
                 showToast('&#9888; 저장 실패');
+            }
+        }
+
+        async function runProxyHealthCheck() {
+            const el = document.getElementById('proxyHealthSummary');
+            if (el) el.textContent = '프록시 health check 실행 중...';
+            try {
+                const r = await fetch('/api/proxy_profiles/health_check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await r.json();
+                const results = data.results || [];
+                const ok = results.filter(x => x.ok).length;
+                if (el) el.textContent = `Health check: ${ok}/${results.length} 성공`;
+                showToast(`프록시 확인 완료: ${ok}/${results.length}`);
+                loadEffectiveSettings();
+            } catch (e) {
+                if (el) el.textContent = '프록시 health check 실패';
+                showToast('프록시 확인 실패');
             }
         }
 
@@ -1390,13 +1476,22 @@
                     const d = await r.json();
                     if (d.session_id) {
                         _lastSessionId = d.session_id;
-                        _lastSessionUrl = `/review/${d.session_id}`;
+                        _lastSessionUrl = d.url || `/review/${d.session_id}`;
+                        const summary = d.detail_summary || {};
+                        const candidateText = d.candidate_count ? ` · 후보 ${d.candidate_count}개` : '';
+                        const detailText = d.has_detail_results
+                            ? `상세 수집 ${summary.success || 0}/${summary.total || 0}개 완료`
+                            : '검색 결과 복원 가능';
+                        const savedAt = d.last_detail_saved_at ? ` · ${d.last_detail_saved_at}` : '';
+                        const meta = document.getElementById('lastSessionMeta');
+                        if (meta) meta.textContent = `${detailText}${candidateText}${savedAt}`;
                         document.getElementById('lastSessionName').textContent = d.source_name || '이전 검색';
                         document.getElementById('lastSessionBanner').style.display = 'flex';
                     }
                 }
             } catch(e) {}
         }
+        checkLastSession();
     </script>
 </body>
 
