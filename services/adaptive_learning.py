@@ -13,13 +13,13 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import config
 
 logger = logging.getLogger(__name__)
 
-DETAIL_CACHE_VERSION = 73
+DETAIL_CACHE_VERSION = 82
 
 DB_PATH = os.path.join(config.DATA_DIR, "history.db")
 EVENT_LOG_PATH = os.path.join(config.BASE_DIR, "logs", "adaptive_events.jsonl")
@@ -121,13 +121,38 @@ def init_db() -> None:
         conn.commit()
 
 
+_DETAIL_CACHE_QUERY_KEYS = {
+    "coupang": {"itemid", "vendoritemid", "productid"},
+    "elevenst": {"trtypecd", "trctgrno", "optionno", "optno", "selno"},
+    "gmarket": {"goodscode", "goodsno", "itemno"},
+    "auction": {"itemno", "itemid", "goodsno"},
+}
+
+
+def _canonical_query(platform: str, query: str) -> str:
+    allowed = _DETAIL_CACHE_QUERY_KEYS.get(platform, set())
+    if not query or not allowed:
+        return ""
+    pairs = []
+    for key, value in parse_qsl(query, keep_blank_values=False):
+        lower_key = key.lower()
+        if lower_key in allowed and value:
+            pairs.append((lower_key, value.strip()))
+    if not pairs:
+        return ""
+    pairs.sort()
+    return urlencode(pairs, doseq=True)
+
+
 def normalize_url(url: str) -> str:
     if not url:
         return ""
     parsed = urlparse(url.strip())
     netloc = parsed.netloc.lower()
     path = parsed.path.rstrip("/")
-    return urlunparse((parsed.scheme.lower(), netloc, path, "", "", ""))
+    platform = normalize_platform("", url)
+    query = _canonical_query(platform, parsed.query)
+    return urlunparse((parsed.scheme.lower(), netloc, path, "", query, ""))
 
 
 def url_hash(url: str) -> str:
@@ -251,7 +276,7 @@ def _calc_score(attempts: int, successes: int, consecutive_failures: int, avg_ms
 
 def _update_platform_state(platform: str, success: bool, status: str) -> None:
     platform = normalize_platform(platform)
-    neutral_statuses = {"zero_result", "manual_required"}
+    neutral_statuses = {"zero_result", "manual_required", "manual_wait"}
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM platform_state WHERE platform = ?",

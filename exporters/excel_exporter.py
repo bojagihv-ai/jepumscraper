@@ -1,13 +1,15 @@
+import logging
 import os
 import shutil
+from pathlib import Path
+from typing import Dict, List
+
 import openpyxl
 from openpyxl.drawing.image import Image as ExcelImage
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from PIL import Image as PILImage, ImageOps
-from typing import List, Dict
-import logging
-from pathlib import Path
+
 from scrapers.base_scraper import ProductResult
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,11 @@ def _safe_preview_path(output_path: str, product_id: str, index: int) -> str:
 
 
 def _safe_asset_path(output_path: str, product_id: str, source_path: str, index: int) -> str:
-    asset_dir = os.path.join(os.path.dirname(output_path), "_excel_assets", os.path.splitext(os.path.basename(output_path))[0])
+    asset_dir = os.path.join(
+        os.path.dirname(output_path),
+        "_excel_assets",
+        os.path.splitext(os.path.basename(output_path))[0],
+    )
     os.makedirs(asset_dir, exist_ok=True)
     safe_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(product_id))[:80]
     ext = os.path.splitext(source_path)[1].lower() or ".jpg"
@@ -36,7 +42,7 @@ def _copy_detail_asset(source_path: str, output_path: str, product_id: str, inde
 
 
 def _make_preview_image(source_path: str, preview_path: str, max_width: int = 190, max_height: int = 116) -> tuple[int, int]:
-    """Create a small embedded preview so very tall detail screenshots do not break Excel layout."""
+    """Create a compact embedded preview so tall screenshots do not break the sheet layout."""
     with PILImage.open(source_path) as img:
         img = ImageOps.exif_transpose(img).convert("RGB")
         width, height = img.size
@@ -53,7 +59,7 @@ def _make_preview_image(source_path: str, preview_path: str, max_width: int = 19
 
 
 def _make_thumbnail_image(source_path: str, preview_path: str, size: int = 88) -> tuple[int, int]:
-    """Write a real small thumbnail file; some spreadsheet apps ignore display-only image sizing."""
+    """Write a real thumbnail file; some spreadsheet apps ignore display-only image sizing."""
     with PILImage.open(source_path) as img:
         img = ImageOps.exif_transpose(img).convert("RGB")
         img.thumbnail((size, size), PILImage.Resampling.LANCZOS)
@@ -74,22 +80,21 @@ def _file_uri(path: str) -> str:
 
 class ExcelExporter:
     def export(self, products: List[ProductResult], detail_data: Dict[str, Dict], output_path: str):
-        """
-        엑셀 저장:
-        - 제품 정보 (매칭단계, 플랫폼, 제품명, 가격, URL)
-        - 썸네일
-        - 상세페이지 풀 스크린샷
-        - MHTML 원본 파일 경로 (= "다른 이름으로 저장" 급 품질)
-        """
-        logger.info(f"Exporting {len(products)} products to Excel: {output_path}")
+        logger.info("Exporting %s products to Excel: %s", len(products), output_path)
 
         try:
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "경쟁사_제품_분석"
 
-            # ── 헤더 ──
+            max_detail_parts = max(
+                [len((detail_data.get(prod.id, {}) or {}).get("screenshots") or []) for prod in products] or [0]
+            )
             headers = ["매칭단계", "플랫폼", "제품명", "가격", "URL", "썸네일", "상세 미리보기", "상세 원본 파일"]
+            if max_detail_parts > 1:
+                headers.extend([f"상세 원본 {idx}" for idx in range(2, max_detail_parts + 1)])
+            last_col = len(headers)
+
             header_fill = PatternFill(start_color="2D3748", end_color="2D3748", fill_type="solid")
             header_font = Font(name="맑은 고딕", bold=True, color="FFFFFF", size=11)
 
@@ -98,54 +103,51 @@ class ExcelExporter:
                 cell.value = header
                 cell.fill = header_fill
                 cell.font = header_font
-                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            # 열 너비
-            widths = {'A': 13, 'B': 13, 'C': 44, 'D': 12, 'E': 58, 'F': 18, 'G': 28, 'H': 54}
-            for col, w in widths.items():
-                ws.column_dimensions[col].width = w
+            widths = {"A": 13, "B": 13, "C": 44, "D": 12, "E": 58, "F": 18, "G": 28, "H": 54}
+            for col, width in widths.items():
+                ws.column_dimensions[col].width = width
+            for col_idx in range(9, last_col + 1):
+                ws.column_dimensions[get_column_letter(col_idx)].width = 28
             ws.freeze_panes = "A2"
-            ws.auto_filter.ref = "A1:H1"
+            ws.auto_filter.ref = f"A1:{get_column_letter(last_col)}1"
 
-            # 테두리
             thin_border = Border(
-                left=Side(style='thin'), right=Side(style='thin'),
-                top=Side(style='thin'), bottom=Side(style='thin')
+                left=Side(style="thin"),
+                right=Side(style="thin"),
+                top=Side(style="thin"),
+                bottom=Side(style="thin"),
             )
 
-            # ── 데이터 행 ──
             tier_colors = {1: "E53E3E", 2: "DD6B20", 3: "3182CE", 0: "718096"}
+            tier_labels = {1: "1단계(동일)", 2: "2단계(유사)", 3: "3단계(색상/옵션)", 0: "미분류"}
             row_idx = 2
 
             for prod in products:
-                # 텍스트 데이터
-                tier_label = {1: "1단계(동일)", 2: "2단계(유사)", 3: "3단계(색상다름)", 0: "미분류"}.get(prod.match_tier, "?")
-                ws.cell(row=row_idx, column=1, value=tier_label)
+                ws.cell(row=row_idx, column=1, value=tier_labels.get(prod.match_tier, "?"))
                 ws.cell(row=row_idx, column=2, value=prod.platform)
                 ws.cell(row=row_idx, column=3, value=prod.title)
                 ws.cell(row=row_idx, column=4, value=prod.price)
 
-                # URL을 하이퍼링크로
                 url_cell = ws.cell(row=row_idx, column=5, value=prod.product_url)
                 url_cell.hyperlink = prod.product_url
                 url_cell.font = Font(color="4299E1", underline="single")
 
-                # 행 높이
                 ws.row_dimensions[row_idx].height = 96
+                ws.cell(row=row_idx, column=1).font = Font(
+                    bold=True,
+                    color=tier_colors.get(prod.match_tier, "718096"),
+                )
 
-                # 티어 색상 표시
-                tier_color = tier_colors.get(prod.match_tier, "718096")
-                ws.cell(row=row_idx, column=1).font = Font(bold=True, color=tier_color)
-
-                # 테두리 적용
-                for c in range(1, 9):
-                    ws.cell(row=row_idx, column=c).border = thin_border
-                    ws.cell(row=row_idx, column=c).alignment = Alignment(
-                        vertical='center',
-                        wrap_text=c in (1, 3, 5, 8),
+                for col_idx in range(1, last_col + 1):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.border = thin_border
+                    cell.alignment = Alignment(
+                        vertical="center",
+                        wrap_text=col_idx in (1, 3, 5) or col_idx >= 8,
                     )
 
-                # ── 썸네일 이미지 삽입 ──
                 if prod.local_thumbnail_path and os.path.exists(prod.local_thumbnail_path):
                     try:
                         thumb_preview_path = _safe_preview_path(output_path, prod.id, 0)
@@ -154,56 +156,43 @@ class ExcelExporter:
                         img.width = thumb_w
                         img.height = thumb_h
                         ws.add_image(img, f"F{row_idx}")
-                    except Exception as e:
-                        logger.error(f"Cannot add thumbnail: {e}")
+                    except Exception as exc:
+                        logger.error("Cannot add thumbnail: %s", exc)
 
-                # ── 상세 데이터 (새 형식: dict) ──
-                product_data = detail_data.get(prod.id, {})
+                product_data = detail_data.get(prod.id, {}) or {}
+                screenshots = product_data.get("screenshots") or []
+                valid_paths = [path for path in screenshots if path and os.path.exists(path)]
+                if valid_paths:
+                    first_asset_path = valid_paths[0]
+                    try:
+                        first_asset_path = _copy_detail_asset(valid_paths[0], output_path, prod.id, 1)
+                        preview_path = _safe_preview_path(output_path, prod.id, 1)
+                        preview_w, preview_h = _make_preview_image(first_asset_path, preview_path)
+                        img_detail = ExcelImage(preview_path)
+                        img_detail.width = preview_w
+                        img_detail.height = preview_h
+                        ws.add_image(img_detail, f"G{row_idx}")
+                    except Exception as exc:
+                        logger.error("Cannot add detail preview: %s", exc)
 
-                # screenshots
-                screenshots = product_data.get("screenshots", [])
-                if screenshots:
-                    valid_paths = [p for p in screenshots if p and os.path.exists(p)]
-                    if valid_paths:
-                        part_path = valid_paths[0]
-                        asset_path = part_path
-                        try:
-                            asset_path = _copy_detail_asset(part_path, output_path, prod.id, 1)
-                            preview_path = _safe_preview_path(output_path, prod.id, 1)
-                            preview_w, preview_h = _make_preview_image(asset_path, preview_path)
-                            img_detail = ExcelImage(preview_path)
-                            img_detail.width = preview_w
-                            img_detail.height = preview_h
-                            ws.add_image(img_detail, f"G{row_idx}")
-                        except Exception as e:
-                            logger.error(f"Cannot add detail preview: {e}")
-
-                        detail_cell = ws.cell(row=row_idx, column=8)
-                        detail_cell.value = "상세 이미지 열기"
-                        detail_cell.hyperlink = _file_uri(asset_path)
-                        detail_cell.font = Font(color="4299E1", underline="single", size=9)
-                        detail_cell.alignment = Alignment(wrap_text=True, vertical='center')
-                        detail_cell.comment = None
-                        if len(valid_paths) > 1:
-                            detail_cell.value = f"상세 이미지 열기 외 {len(valid_paths) - 1}개"
+                    detail_cell = ws.cell(row=row_idx, column=8)
+                    detail_cell.value = "상세 이미지 열기" if len(valid_paths) == 1 else f"상세 이미지 열기 외 {len(valid_paths) - 1}개"
+                    detail_cell.hyperlink = _file_uri(first_asset_path)
+                    detail_cell.font = Font(color="4299E1", underline="single", size=9)
+                    detail_cell.alignment = Alignment(wrap_text=True, vertical="center")
 
                     for idx, part_path in enumerate(valid_paths[1:], start=2):
-                        if not os.path.exists(part_path):
-                            continue
                         try:
                             asset_path = _copy_detail_asset(part_path, output_path, prod.id, idx)
-                            img_col = 8 + idx
-                            col_letter = get_column_letter(img_col)
-                            ws.column_dimensions[col_letter].width = 26
+                            img_col = 8 + (idx - 1)
                             cell = ws.cell(row=row_idx, column=img_col)
                             cell.value = f"분할 {idx} 열기"
                             cell.hyperlink = _file_uri(asset_path)
                             cell.font = Font(color="4299E1", underline="single", size=9)
-                            cell.alignment = Alignment(wrap_text=True, vertical='center')
-                        except Exception as e:
-                            logger.error(f"Cannot add detail link: {e}")
+                            cell.alignment = Alignment(wrap_text=True, vertical="center")
+                        except Exception as exc:
+                            logger.error("Cannot add detail link: %s", exc)
 
-                # MHTML 경로
                 mhtml_path = product_data.get("mhtml_path", "")
                 if mhtml_path:
                     mhtml_cell = ws.cell(row=row_idx, column=8)
@@ -212,7 +201,7 @@ class ExcelExporter:
                     else:
                         mhtml_cell.value = mhtml_path
                         mhtml_cell.font = Font(size=9, color="999999")
-                    mhtml_cell.alignment = Alignment(wrap_text=True, vertical='center')
+                    mhtml_cell.alignment = Alignment(wrap_text=True, vertical="center")
 
                 row_idx += 1
 
@@ -220,6 +209,6 @@ class ExcelExporter:
             logger.info("Excel file generated successfully.")
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to export excel: {e}")
+        except Exception as exc:
+            logger.exception("Failed to export excel: %s", exc)
             return False

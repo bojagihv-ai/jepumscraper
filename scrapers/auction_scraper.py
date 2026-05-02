@@ -17,6 +17,14 @@ from engines.text_matcher import extract_keywords
 
 logger = logging.getLogger(__name__)
 
+# Cloudflare/봇 감지 우회용 stealth 초기화 스크립트
+_STEALTH_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['ko-KR','ko','en-US','en']});
+window.chrome = {runtime: {}};
+"""
+
 
 def _safe_log_name(prefix: str, query: str) -> str:
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', '_', query or '').strip(' ._')
@@ -36,8 +44,23 @@ def _looks_blocked(html: str) -> bool:
         or 'access denied' in lowered
         or 'captcha' in lowered
         or 'verify you are human' in lowered
+        or '\uc6d0\ud65c\ud55c \uc11c\ube44\uc2a4 \uc774\uc6a9\uc744 \uc704\ud55c' in html
+        or '\uc0ac\ub78c\uc778\uc9c0 \ud655\uc778' in html
+        or '\ubd07 \ud655\uc778' in html
+        or '\uac80\ud1a0\ubc88\ud638' in html
         or '잠시만 기다려' in html
         or '보안 확인' in html
+    )
+
+
+def _looks_like_results(html: str) -> bool:
+    if not html or _looks_blocked(html):
+        return False
+    soup = BeautifulSoup(html, 'html.parser')
+    return bool(
+        soup.select_one('.itemcard')
+        or soup.select_one('a[href*="itemno"], a[href*="ItemNo"], a[href*="DetailView"]')
+        or soup.select_one('div[class*="section--item"], div[class*="box__item"]')
     )
 
 
@@ -49,6 +72,22 @@ def _text_first(node, selectors: list[str]) -> str:
             if text:
                 return text
     return ""
+
+
+def _remove_stale_locks(profile_dir: "Path") -> None:
+    """비정상 종료로 남은 Chrome lockfile/LOCK 제거 (Chrome 미실행 시에만)"""
+    from pathlib import Path
+    lock_files = [
+        Path(profile_dir) / "lockfile",
+        Path(profile_dir) / "Default" / "LOCK",
+    ]
+    for lf in lock_files:
+        if lf.exists():
+            try:
+                lf.unlink()
+                logger.info("[Auction] stale lock 제거: %s", lf.name)
+            except Exception as exc:
+                logger.debug("[Auction] lock 제거 실패 %s: %s", lf.name, exc)
 
 
 def _parse_auction_html(html: str, max_count: int) -> List[ProductResult]:
@@ -167,9 +206,7 @@ class AuctionScraper(BaseScraper):
         try:
             async with async_playwright() as p:
                 ua = random.choice(config.USER_AGENT_LIST)
-                # 옥션은 보안 확인이 자주 떠서 사용자가 볼 수 있는 브라우저 세션을 사용합니다.
-                # 보안 확인이 유지되면 반복 요청하지 않고 중단해 적응 학습의 cooldown에 맡깁니다.
-                browser = None
+                # 옥션 전용 프로필 우선, 실패 시 사용자 Chrome 임시복사본으로 폴백
                 tmp_profiles = []
                 pw_proxy = None
                 try:
@@ -179,47 +216,129 @@ class AuctionScraper(BaseScraper):
                     logger.debug(f"[Auction] proxy skipped: {e}")
 
                 async def open_context():
-                    nonlocal browser
+                    from engine.browser_profile import (
+                        auction_browser_profile_dir,
+                        chrome_profile_name,
+                        copy_chrome_profile_tmp,
+                        use_user_browser_session,
+                    )
+                    profile_dir = auction_browser_profile_dir()
+                    debug_port = int(getattr(config, "AUCTION_DEBUG_PORT", 9224) or 9224)
+
+                    # 1단계: 이미 열려있는 전용 Chrome에 CDP 연결
                     try:
-                        from engine.browser_profile import (
-                            chrome_profile_name,
-                            copy_chrome_profile_tmp,
-                            use_user_browser_session,
+                        browser = await p.chromium.connect_over_cdp(
+                            f"http://127.0.0.1:{debug_port}",
+                            timeout=2500,
                         )
+                        if browser.contexts:
+                            logger.info("[Auction] CDP 연결 성공 (port %s)", debug_port)
+                            return browser.contexts[0], "cdp"
+                    except Exception as cdp_exc:
+                        logger.debug("[Auction] CDP 연결 스킵: %s", cdp_exc)
+
+                    # 2단계: 전용 프로필로 새 Chrome 실행 (stale lock 정리 후)
+                    _remove_stale_locks(profile_dir)
+                    try:
+                        ctx = await p.chromium.launch_persistent_context(
+                            user_data_dir=str(profile_dir),
+                            channel="chrome",
+                            headless=False,
+                            **({"proxy": pw_proxy} if pw_proxy else {}),
+                            ignore_default_args=['--enable-automation'],  # "자동화 소프트웨어" 배너 제거
+                            args=[
+                                '--disable-blink-features=AutomationControlled',
+                                '--disable-infobars',
+                                '--profile-directory=Default',
+                            ],
+                            viewport={"width": 1920, "height": 1080},
+                            locale='ko-KR',
+                            timezone_id='Asia/Seoul',
+                        )
+                        await ctx.add_init_script(_STEALTH_SCRIPT)
+                        logger.info("[Auction] 전용 프로필로 실행")
+                        return ctx, "persistent"
+                    except Exception as e:
+                        logger.warning("[Auction] 전용 프로필 실패, 임시복사본으로 폴백: %s", e)
+
+                    # 3단계: 사용자 Chrome 쿠키 임시복사본 사용 (GitHub 원본 방식)
+                    try:
                         if use_user_browser_session():
                             tmp_profile = copy_chrome_profile_tmp()
                             if tmp_profile:
                                 tmp_profiles.append(tmp_profile)
-                                return await p.chromium.launch_persistent_context(
+                                ctx = await p.chromium.launch_persistent_context(
                                     user_data_dir=tmp_profile,
                                     channel="chrome",
                                     headless=False,
                                     **({"proxy": pw_proxy} if pw_proxy else {}),
+                                    ignore_default_args=['--enable-automation'],
                                     args=[
                                         '--disable-blink-features=AutomationControlled',
+                                        '--disable-infobars',
                                         f"--profile-directory={chrome_profile_name()}",
                                     ],
                                     viewport={"width": 1920, "height": 1080},
                                     locale='ko-KR',
                                     timezone_id='Asia/Seoul',
                                 )
-                    except Exception as e:
-                        logger.debug(f"[Auction] Chrome profile context skipped: {e}")
+                                await ctx.add_init_script(_STEALTH_SCRIPT)
+                                logger.info("[Auction] 임시복사본 프로필로 실행")
+                                return ctx, "tmp_profile"
+                    except Exception as e2:
+                        logger.warning("[Auction] 임시복사본 폴백도 실패: %s", e2)
 
-                    if browser is None:
-                        browser = await p.chromium.launch(
-                            headless=False,
-                            **({"proxy": pw_proxy} if pw_proxy else {}),
-                        )
-                    return await browser.new_context(
-                        viewport={"width": 1920, "height": 1080},
-                        locale='ko-KR',
-                        timezone_id='Asia/Seoul',
-                    )
+                    self.last_status = "manual_required"
+                    self.last_error = "옥션 Chrome을 열 수 없습니다. 수동으로 확인해주세요."
+                    return None, "none"
+
+                async def close_context(ctx, mode: str, page=None):
+                    try:
+                        if page is not None and not page.is_closed():
+                            await page.close()
+                    except Exception:
+                        pass
+                    if mode not in ("cdp",) and ctx is not None:
+                        try:
+                            await ctx.close()
+                        except Exception:
+                            pass
+
+                async def wait_for_manual_check(page):
+                    wait_sec = max(0, int(getattr(config, "AUCTION_HUMAN_CHECK_WAIT_SEC", 180) or 0))
+                    deadline = asyncio.get_running_loop().time() + wait_sec
+                    logger.warning("[Auction] human check page detected. Waiting up to %ss for user confirmation.", wait_sec)
+                    try:
+                        await page.bring_to_front()
+                    except Exception:
+                        pass
+                    while True:
+                        await page.wait_for_timeout(2000)
+                        try:
+                            html = await page.content()
+                        except Exception as exc:
+                            logger.debug("[Auction] human-check page still navigating: %s", exc)
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=3000)
+                            except Exception:
+                                pass
+                            if asyncio.get_running_loop().time() >= deadline:
+                                try:
+                                    return await page.content()
+                                except Exception:
+                                    return ""
+                            continue
+                        if _looks_like_results(html) or not _looks_blocked(html):
+                            logger.info("[Auction] human check cleared; continuing search.")
+                            return html
+                        if asyncio.get_running_loop().time() >= deadline:
+                            return html
 
                 max_retries = 3
                 for attempt in range(max_retries):
-                    ctx = await open_context()
+                    ctx, ctx_mode = await open_context()
+                    if ctx is None:
+                        break
                     page = await ctx.new_page()
 
                     logger.info(f"[옥션] 검색 (시도 {attempt+1}/{max_retries}): {url}")
@@ -228,6 +347,14 @@ class AuctionScraper(BaseScraper):
                         await page.wait_for_timeout(random.uniform(2500, 4000))
 
                         page_html = await page.content()
+                        if _looks_blocked(page_html):
+                            page_html = await wait_for_manual_check(page)
+                            if _looks_blocked(page_html):
+                                self.last_status = "blocked"
+                                self.last_error = "Auction human check is still pending"
+                                logger.warning("[Auction] human check was not completed within the wait window.")
+                                await close_context(ctx, ctx_mode, page)
+                                break
                         if "기다리십시오" in page_html or "잠시만" in page_html or "Just a moment" in page_html:
                             logger.warning("[옥션] ⛔ 봇 차단 감지 (Cloudflare/방화벽). 브라우저에서 직접 캡차를 해제할 시간을 15초간 부여합니다.")
                             # 사용자가 클릭할 수 있도록 시간을 넉넉히 주고 대기합니다 (창이 중앙에 뜹니다)
@@ -237,7 +364,7 @@ class AuctionScraper(BaseScraper):
                                 self.last_status = "blocked"
                                 self.last_error = "Cloudflare/방화벽 보안 확인"
                                 logger.warning("[옥션] 보안 확인이 유지되어 이번 수집을 중단합니다.")
-                                await ctx.close()
+                                await close_context(ctx, ctx_mode, page)
                                 break
                             else:
                                 logger.info("[옥션] 캡차가 해제되었습니다! 진행합니다.")
@@ -308,20 +435,18 @@ class AuctionScraper(BaseScraper):
                                 except Exception as e:
                                     continue
                             # 성공했으므로 재시도 루프 탈출
-                            await ctx.close()
+                            await close_context(ctx, ctx_mode, page)
                             break
                         else:
                             logger.warning(f"[옥션] 0개 추출됨. 재시도합니다... (시도 {attempt+1})")
-                            await ctx.close()
+                            await close_context(ctx, ctx_mode, page)
                             await asyncio.sleep(random.uniform(2.0, 4.0))
 
                     except Exception as e:
                         logger.warning(f"[옥션] 탐색 중 에러 (재시도): {e}")
-                        await ctx.close()
+                        await close_context(ctx, ctx_mode, page)
                         await asyncio.sleep(random.uniform(2.0, 4.0))
 
-                if browser:
-                    await browser.close()
                 if tmp_profiles:
                     import shutil
                     for tmp_profile in tmp_profiles:

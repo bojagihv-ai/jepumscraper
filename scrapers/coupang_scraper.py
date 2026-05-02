@@ -213,6 +213,24 @@ def _focus_coupang_search_input(page) -> bool:
     return False
 
 
+def _safe_page_content(page, retries: int = 6, delay: float = 0.7) -> str:
+    """Read page HTML while tolerating short navigation windows."""
+    for _ in range(max(1, retries)):
+        try:
+            return page.content()
+        except Exception as exc:
+            message = str(exc).lower()
+            if "navigating" not in message and "changing the content" not in message:
+                logger.debug("[Coupang] page.content skipped: %s", exc)
+                break
+            time.sleep(delay)
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=2500)
+            except Exception:
+                pass
+    return ""
+
+
 def _run_coupang_form_search(page, query: str) -> bool:
     for selector in COUPANG_SEARCH_SELECTORS:
         try:
@@ -415,7 +433,7 @@ def _run_coupang_ui_search(query: str) -> str:
             except Exception:
                 pass
 
-            html = page.content()
+            html = _safe_page_content(page, retries=4, delay=0.5)
             if _looks_blocked(html):
                 browser.close()
                 return "blocked"
@@ -443,6 +461,9 @@ def _run_coupang_ui_search(query: str) -> str:
             time.sleep(random.uniform(2.0, 3.2))
 
             current_url = page.url or ""
+            if "/np/search" in current_url:
+                browser.close()
+                return "submitted"
             if "/np/search" not in current_url and _run_coupang_form_search(page, query):
                 try:
                     page.wait_for_url("**/np/search**", timeout=15000)
@@ -452,12 +473,23 @@ def _run_coupang_ui_search(query: str) -> str:
                     except Exception:
                         pass
                 time.sleep(random.uniform(2.0, 3.2))
+                current_url = page.url or ""
+                if "/np/search" in current_url:
+                    browser.close()
+                    return "submitted"
 
-            html = page.content()
-            if _looks_blocked(html):
+            html = _safe_page_content(page, retries=8, delay=0.8)
+            if html and _looks_blocked(html):
                 browser.close()
                 return "blocked"
             current_url = page.url or ""
+            if "/np/search" not in current_url and html:
+                try:
+                    if _parse_coupang_html(html, 1):
+                        browser.close()
+                        return "submitted"
+                except Exception:
+                    pass
             browser.close()
             return "submitted" if "/np/search" in current_url else "unavailable"
     except Exception as exc:
@@ -603,18 +635,32 @@ def _scrape_coupang_assisted_current_page(query: str, max_count: int) -> List[Pr
                 if query_norm and query_norm not in re.sub(r"\s+", "", decoded_url).lower():
                     continue
                 try:
-                    page.wait_for_load_state("domcontentloaded", timeout=3000)
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
                 except Exception:
                     pass
-                html = page.content()
-                if _looks_blocked(html):
-                    logger.warning("[쿠팡] assisted current page is blocked")
-                    continue
-                results = _parse_coupang_html(html, max_count)
-                logger.info("[쿠팡] assisted current page → %d개", len(results))
-                if results:
-                    browser.close()
-                    return results
+                for attempt in range(5):
+                    if attempt:
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=3500)
+                        except Exception:
+                            pass
+                        try:
+                            page.evaluate("window.scrollBy(0, Math.floor(window.innerHeight * 0.75)); true")
+                        except Exception:
+                            pass
+                        time.sleep(0.8 + attempt * 0.25)
+                    html = _safe_page_content(page, retries=8, delay=0.75)
+                    if not html:
+                        logger.info("[쿠팡] assisted current page still navigating; retry %d", attempt + 1)
+                        continue
+                    if _looks_blocked(html):
+                        logger.warning("[쿠팡] assisted current page is blocked")
+                        break
+                    results = _parse_coupang_html(html, max_count)
+                    logger.info("[쿠팡] assisted current page → %d개 (try %d)", len(results), attempt + 1)
+                    if results:
+                        browser.close()
+                        return results
             browser.close()
     except Exception as exc:
         logger.info("[쿠팡] assisted capture unavailable: %s", exc)

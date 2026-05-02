@@ -38,17 +38,11 @@ class GmarketScraper(BaseScraper):
                 co.set_argument(f'--proxy-server={proxy_url}')
         except Exception as e:
             logger.debug(f"[Gmarket] proxy skipped: {e}")
-        try:
-            from engine.browser_profile import chrome_profile_name, copy_chrome_profile_tmp
-            tmp_profile = copy_chrome_profile_tmp()
-            if tmp_profile:
-                co.set_user_data_path(tmp_profile)
-                co.set_user(chrome_profile_name())
-        except Exception as e:
-            logger.debug(f"[Gmarket] Chrome profile context skipped: {e}")
+        logger.debug("[Gmarket] using clean browser profile")
         paths = [
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         ]
         for path in paths:
             if os.path.exists(path):
@@ -140,6 +134,11 @@ class GmarketScraper(BaseScraper):
                 except Exception:
                     pass
 
+        if results:
+            self.last_status = "success"
+            self.last_error = ""
+        elif not self.last_status:
+            self.last_status = "zero_result"
         return results
 
     async def search(self, keyword: str) -> List[ProductResult]:

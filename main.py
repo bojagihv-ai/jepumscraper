@@ -15,7 +15,13 @@ import config
 # 서비스 및 엔진 로드
 from scrapers.base_scraper import ProductResult, download_image_sync
 from services.search_service import SearchService
-from services.detail_scraper import DetailScraper, is_detail_result_usable, _normalize_detail_url
+from services.detail_scraper import (
+    DetailScraper,
+    get_detail_capture_method_order,
+    is_detail_result_usable,
+    requires_screen_capture,
+    _normalize_detail_url,
+)
 from services import adaptive_learning
 from engine.ip_manager import (
     get_manager as get_proxy_manager,
@@ -521,7 +527,7 @@ def index():
 
 @app.route('/health')
 def health():
-    return jsonify({"ok": True, "capture_engine_version": "detail-v73"})
+    return jsonify({"ok": True, "capture_engine_version": "detail-v82"})
 
 
 @app.route('/api/debug_route_marker')
@@ -529,7 +535,7 @@ def debug_route_marker():
     return jsonify({
         "pid": os.getpid(),
         "main_file": __file__,
-        "capture_engine_version": "detail-v73",
+        "capture_engine_version": "detail-v82",
         "scrape_details_has_marker": "capture_engine_version" in scrape_details.__code__.co_names,
     })
 
@@ -662,15 +668,18 @@ def open_auction_profile():
         return jsonify({"ok": False, "error": "Chrome 실행 파일을 찾지 못했습니다."}), 500
 
     payload = request.get_json(silent=True) or {}
+    session_id = (payload.get("session_id") or "").strip()
     query = (payload.get("query") or "").strip()
     if not query:
-        _, session_data = _session_or_last(payload.get("session_id", ""))
+        _, session_data = _session_or_last(session_id)
         if session_data:
             query = (session_data.get("source_name") or "").strip()
 
     target_url = "https://browse.auction.co.kr/"
     if query:
         target_url = f"https://browse.auction.co.kr/search?keyword={quote_plus(query)}"
+    if session_id:
+        target_url = f"{target_url}#jepum_session={quote_plus(session_id)}"
 
     profile_dir = auction_browser_profile_dir()
     extension_dir = coupang_import_extension_dir()
@@ -678,6 +687,8 @@ def open_auction_profile():
         chrome,
         f'--user-data-dir={profile_dir}',
         '--profile-directory=Default',
+        f'--remote-debugging-port={int(getattr(config, "AUCTION_DEBUG_PORT", 9224) or 9224)}',
+        '--remote-allow-origins=*',
     ]
     if (extension_dir / "manifest.json").is_file():
         args.extend([
@@ -705,6 +716,8 @@ def import_coupang_html():
     html = payload.get('html') or request.form.get('html', '')
     page_url = payload.get('url') or request.form.get('url', '')
     session_id = payload.get('session_id') or request.form.get('session_id', '')
+    if not session_id and page_url:
+        session_id = (parse_qs(urlparse(page_url).fragment).get("jepum_session") or [""])[0]
     query = payload.get('query') or request.form.get('query', '')
     source_name = _infer_coupang_query(page_url, query)
 
@@ -806,6 +819,8 @@ def import_auction_html():
     html = payload.get('html') or request.form.get('html', '')
     page_url = payload.get('url') or request.form.get('url', '')
     session_id = payload.get('session_id') or request.form.get('session_id', '')
+    if not session_id and page_url:
+        session_id = (parse_qs(urlparse(page_url).fragment).get("jepum_session") or [""])[0]
     query = payload.get('query') or request.form.get('query', '')
     source_name = _infer_page_query(page_url, query)
 
@@ -1139,7 +1154,7 @@ def send_source(session_id):
 
 @app.route('/api/scrape_details', methods=['POST'])
 async def scrape_details():
-    logging.warning("[scrape_details-entry] pid=%s route_version=detail-v73", os.getpid())
+    logging.warning("[scrape_details-entry] pid=%s route_version=detail-v82", os.getpid())
     data = request.json
     session_id = data.get('session_id')
     selected_ids = data.get('selected_ids', [])
@@ -1200,11 +1215,8 @@ async def scrape_details():
         detail_url = _normalize_detail_url(product.product_url)
         is_naver = "naver.com" in detail_url or "smartstore" in detail_url
         platform_key = adaptive_learning.normalize_platform(product.platform, detail_url)
-        method_order_preview = adaptive_learning.get_detail_method_order(platform_key, detail_url)
-        uses_screen_capture = (
-            "coupang.com" in detail_url
-            or any(method in {"chrome_screen", "ahk_screen"} for method in method_order_preview)
-        )
+        method_order_preview = get_detail_capture_method_order(platform_key, detail_url)
+        uses_screen_capture = requires_screen_capture(platform_key, detail_url)
         try:
             import inspect as _inspect
             logging.warning(
@@ -1221,7 +1233,9 @@ async def scrape_details():
             )
         except Exception as _runtime_exc:
             logging.warning("[detail-runtime] marker check failed for %s: %s", product.id, _runtime_exc)
-        cached = adaptive_learning.get_detail_cache(detail_url)
+        cached = None if platform_key == "naver" else adaptive_learning.get_detail_cache(detail_url)
+        if platform_key == "naver":
+            logging.info(f"[detail] bypass cache for naver product {product.id}")
         if cached and is_detail_result_usable(cached):
             logging.info(f"[detail] cache hit for {product.id}")
             adaptive_learning.log_event(
@@ -1388,7 +1402,7 @@ async def scrape_details():
             "scraped_data": scraped_data,
             "detail_summary": detail_summary,
             "partial_success": bool(failed_details),
-            "capture_engine_version": "detail-v73",
+            "capture_engine_version": "detail-v82",
             "capture_queue": {
                 "total": total_selected,
                 "screen_queue_concurrency": 1,

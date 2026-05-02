@@ -5,6 +5,7 @@ import re
 import time
 from difflib import SequenceMatcher
 from typing import Any, Dict, List
+from urllib.parse import quote_plus
 
 import config
 import progress_store
@@ -31,6 +32,7 @@ STATUS_LABELS = {
     "timeout": "시간 초과",
     "cooldown_skip": "대기",
     "manual_required": "사용자 검색 필요",
+    "manual_wait": "전용 Chrome 대기",
     "error": "실패",
 }
 
@@ -69,6 +71,50 @@ PLATFORM_SCRAPERS: Dict[str, Dict[str, Any]] = {
         "label": "11st",
     },
 }
+
+
+AUCTION_MANUAL_WAIT_MESSAGE = "옥션 전용 Chrome에서 보안 확인이 끝난 뒤 검색 결과가 보이면 자동으로 가져옵니다."
+
+
+def _open_auction_manual_profile(keyword: str, session_id: str = "") -> tuple[bool, str]:
+    try:
+        import subprocess
+        from engine.browser_profile import (
+            auction_browser_profile_dir,
+            chrome_browser_path,
+            coupang_import_extension_dir,
+        )
+
+        chrome = chrome_browser_path()
+        if not chrome:
+            return False, "Chrome 실행 파일을 찾지 못했습니다."
+
+        target_url = "https://browse.auction.co.kr/"
+        if keyword:
+            target_url = f"https://browse.auction.co.kr/search?keyword={quote_plus(keyword)}"
+        if session_id:
+            target_url = f"{target_url}#jepum_session={quote_plus(session_id)}"
+
+        profile_dir = auction_browser_profile_dir()
+        extension_dir = coupang_import_extension_dir()
+        args = [
+            chrome,
+            f"--user-data-dir={profile_dir}",
+            "--profile-directory=Default",
+            f"--remote-debugging-port={int(getattr(config, 'AUCTION_DEBUG_PORT', 9224) or 9224)}",
+            "--remote-allow-origins=*",
+        ]
+        if (extension_dir / "manifest.json").is_file():
+            args.extend([
+                f"--disable-extensions-except={extension_dir}",
+                f"--load-extension={extension_dir}",
+            ])
+        args.append(target_url)
+        subprocess.Popen(args, close_fds=True)
+        return True, AUCTION_MANUAL_WAIT_MESSAGE
+    except Exception as exc:
+        logger.warning("[Auction] manual profile open failed: %s", exc)
+        return False, f"{AUCTION_MANUAL_WAIT_MESSAGE} (전용 Chrome 자동 열기 실패: {exc})"
 
 
 def _extract_seller(title: str) -> str:
@@ -245,7 +291,13 @@ class SearchService:
             try:
                 await adaptive_learning.wait_turn(platform_key, "search", method)
                 with use_proxy_for(platform_key, "search") as proxy_selection:
-                    results = await asyncio.wait_for(scraper.search(keyword), timeout=per_platform_timeout)
+                    timeout_sec = per_platform_timeout
+                    if platform_key == "auction":
+                        timeout_sec = max(
+                            per_platform_timeout,
+                            float(getattr(config, "AUCTION_HUMAN_CHECK_WAIT_SEC", 180) or 180) + 30,
+                        )
+                    results = await asyncio.wait_for(scraper.search(keyword), timeout=timeout_sec)
                 duration_ms = int((time.monotonic() - started) * 1000)
                 success = len(results) > 0
                 scraper_status = getattr(scraper, "last_status", "") or ""
@@ -254,39 +306,52 @@ class SearchService:
                 if status == "success" and not success:
                     status = "zero_result"
                 message = f"{len(results)} results" if not scraper_error else scraper_error
+                report_status = status
+                report_message = message
+                if platform_key == "auction" and not success and status in {"blocked", "captcha", "manual_required"}:
+                    opened, manual_message = _open_auction_manual_profile(keyword, job_id)
+                    report_status = "manual_wait"
+                    report_message = manual_message
+                    progress_store.set_status(manual_message, job_id)
+                    logger.warning(
+                        "[Auction] automatic search received security page; manual profile %s",
+                        "opened" if opened else "not opened",
+                    )
                 adaptive_learning.record_method_result(
                     platform=platform_key,
                     stage="search",
                     method=method,
                     success=success,
-                    status=status,
+                    status=report_status,
                     duration_ms=duration_ms,
                     job_id=job_id,
-                    message=message,
+                    message=report_message,
                     metadata={
                         "keyword": keyword,
                         "raw_count": len(results),
+                        "original_status": status,
+                        "original_message": message,
                         **proxy_selection.metadata(),
                     },
                 )
                 get_proxy_manager().record_result(
                     proxy_selection,
                     platform=platform_key,
-                    status=status,
+                    status=report_status,
                     success=success,
                     duration_ms=duration_ms,
-                    error="" if success else message,
+                    error="" if success else report_message,
                 )
 
                 has_thumb = sum(1 for r in results if getattr(r, "local_thumbnail_path", ""))
                 report["platforms"][platform] = {
-                    "status": STATUS_LABELS.get(status, "실패"),
+                    "status": STATUS_LABELS.get(report_status, "실패"),
                     "raw_count": len(results),
                     "with_thumbnail": has_thumb,
                     "without_thumbnail": len(results) - has_thumb,
                     "method": method,
                     "duration_ms": duration_ms,
-                    "error": None if success or status == "zero_result" else message,
+                    "error": None if success or report_status == "zero_result" else report_message,
                     "policy": adaptive_learning.get_platform_policy(platform_key),
                     "proxy": proxy_selection.metadata(),
                 }

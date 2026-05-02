@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-DETAIL_CAPTURE_VERSION = 73
+DETAIL_CAPTURE_VERSION = 82
 
 DETAIL_EXPAND_JS = r"""
 (() => {
@@ -671,6 +671,26 @@ def _normalize_detail_url(url: str) -> str:
     return url
 
 
+def get_detail_capture_method_order(platform_key: str, product_url: str) -> List[str]:
+    method_order = adaptive_learning.get_detail_method_order(platform_key, product_url)
+    if platform_key == "naver":
+        method_order = ["chrome_screen"] + [method for method in method_order if method != "chrome_screen"]
+    if platform_key in {"coupang", "elevenst", "gmarket", "auction"}:
+        preferred = ["chrome_screen"]
+        if platform_key == "coupang":
+            preferred.append("ahk_screen")
+        method_order = preferred + [method for method in method_order if method not in preferred]
+    if platform_key in {"naver", "elevenst", "gmarket"}:
+        for fallback in ("chrome_screen", "playwright_user_profile", "drission"):
+            if fallback not in method_order:
+                method_order.append(fallback)
+    return method_order
+
+
+def requires_screen_capture(platform_key: str, product_url: str) -> bool:
+    return any(method in {"chrome_screen", "ahk_screen"} for method in get_detail_capture_method_order(platform_key, product_url))
+
+
 def _image_file_quality(path: str) -> Dict:
     info = {
         "ok": False,
@@ -709,7 +729,7 @@ def _set_result_quality(result: Dict, path: str, extra=None) -> Dict:
 
 def _trim_auction_repeated_header(path: str) -> Dict:
     """Auction sometimes appends the top product area again after the detail body."""
-    info = {"auction_trimmed_repeat": False, "auction_trim_strategy": "top_similarity"}
+    info = {"auction_trimmed_repeat": False, "auction_trim_strategy": "logo_tail_or_top_similarity"}
     try:
         with Image.open(path) as img:
             rgb = img.convert("RGB")
@@ -718,8 +738,51 @@ def _trim_auction_repeated_header(path: str) -> Dict:
             if h < 6000 or w < 900:
                 return info
 
-            dark = (arr[:, :, 0] < 90) & (arr[:, :, 1] < 90) & (arr[:, :, 2] < 90)
             red = (arr[:, :, 0] > 145) & (arr[:, :, 1] < 95) & (arr[:, :, 2] < 105)
+            logo_x1 = int(w * 0.08)
+            logo_x2 = min(int(w * 0.60), logo_x1 + 920)
+            logo_score = red[:, logo_x1:logo_x2].mean(axis=1)
+            logo_start = max(3600, int(h * 0.32))
+            logo_rows = np.where(logo_score[logo_start:] > 0.25)[0] + logo_start
+            if logo_rows.size:
+                logo_groups = np.split(logo_rows, np.where(np.diff(logo_rows) > 4)[0] + 1)
+                for group in logo_groups:
+                    logo_peak = float(logo_score[group].max())
+                    if len(group) < 4 or logo_peak < 0.45:
+                        continue
+                    logo_y = int(group[0])
+                    crop_y = max(1200, logo_y - 35)
+                    removed_height = h - crop_y
+                    if removed_height < 1200:
+                        continue
+                    crop_ratio = crop_y / float(max(h, 1))
+                    removed_ratio = removed_height / float(max(h, 1))
+                    info.update({
+                        "auction_trim_candidate_y": int(crop_y),
+                        "auction_trim_candidate_removed": int(removed_height),
+                        "auction_trim_candidate_ratio": round(crop_ratio, 4),
+                        "auction_trim_candidate_removed_ratio": round(removed_ratio, 4),
+                        "auction_trim_logo_score": round(logo_peak, 4),
+                    })
+                    if crop_ratio < 0.82 or removed_ratio > 0.18 or removed_height > 7000:
+                        info["auction_trim_rejected_reason"] = "logo_candidate_not_safe_tail"
+                        continue
+                    trimmed = rgb.crop((0, 0, w, crop_y))
+                    tmp_path = f"{path}.auction-logo-trim.tmp.jpg"
+                    trimmed.save(tmp_path, "JPEG", quality=86)
+                    trimmed.close()
+                    os.replace(tmp_path, path)
+                    info.update({
+                        "auction_trimmed_repeat": True,
+                        "auction_trim_reason": "repeated_auction_logo",
+                        "auction_original_height": int(h),
+                        "auction_trim_y": int(crop_y),
+                        "auction_removed_height": int(removed_height),
+                    })
+                    logger.info("[Detail] trimmed repeated Auction logo tail at y=%s from %s", crop_y, path)
+                    return info
+
+            dark = (arr[:, :, 0] < 90) & (arr[:, :, 1] < 90) & (arr[:, :, 2] < 90)
             row_dark = dark[:, int(w * 0.05):int(w * 0.95)].mean(axis=1)
             base_h = min(1100, h // 5)
             base_sample = rgb.crop((0, 0, w, base_h)).convert("L").resize((240, 120))
@@ -745,8 +808,21 @@ def _trim_auction_repeated_header(path: str) -> Dict:
                 repeat_sample = rgb.crop((0, crop_y, w, crop_y + base_h)).convert("L").resize((240, 120))
                 repeat_arr = np.asarray(repeat_sample, dtype=np.int16)
                 similarity_diff = float(np.abs(base_arr - repeat_arr).mean())
+                removed_height = h - crop_y
+                crop_ratio = crop_y / float(max(h, 1))
+                removed_ratio = removed_height / float(max(h, 1))
+                info.update({
+                    "auction_trim_candidate_y": int(crop_y),
+                    "auction_trim_candidate_removed": int(removed_height),
+                    "auction_trim_candidate_ratio": round(crop_ratio, 4),
+                    "auction_trim_candidate_removed_ratio": round(removed_ratio, 4),
+                    "auction_trim_candidate_diff": round(similarity_diff, 2),
+                })
                 if similarity_diff > 28.0:
-                    info["auction_trim_candidate_diff"] = round(similarity_diff, 2)
+                    info["auction_trim_rejected_reason"] = "candidate_not_similar_enough"
+                    continue
+                if crop_ratio < 0.80 or removed_ratio > 0.22 or removed_height > 9000:
+                    info["auction_trim_rejected_reason"] = "candidate_not_safe_tail"
                     continue
 
                 trimmed = rgb.crop((0, 0, w, crop_y))
@@ -771,7 +847,7 @@ def _trim_auction_repeated_header(path: str) -> Dict:
 
 def _trim_elevenst_repeated_tail(path: str) -> Dict:
     """Trim only a true 11st tail repeat; never cut a mid-page repeat or live detail content."""
-    info = {"elevenst_trimmed_repeat": False, "elevenst_trim_strategy": "guarded_tail_similarity"}
+    info = {"elevenst_trimmed_repeat": False, "elevenst_trim_strategy": "guarded_tail_similarity_with_header"}
     try:
         with Image.open(path) as img:
             rgb = img.convert("RGB")
@@ -822,7 +898,30 @@ def _trim_elevenst_repeated_tail(path: str) -> Dict:
             })
             if crop_y <= int(h * 0.50) or removed_height < 1400:
                 return info
-            if crop_ratio < 0.72 or removed_height > 5200 or removed_ratio > 0.24:
+
+            header_top = max(0, crop_y - 80)
+            header_bottom = min(h, crop_y + 1100)
+            header_arr = arr = np.asarray(rgb.crop((0, header_top, w, header_bottom)), dtype=np.uint8)
+            left_band = header_arr[:, : max(260, int(w * 0.42)), :]
+            red_mask = (
+                (left_band[:, :, 0] > 170)
+                & (left_band[:, :, 1] < 95)
+                & (left_band[:, :, 2] < 120)
+            )
+            dark_mask = np.all(header_arr < 75, axis=2)
+            red_rows = np.where(red_mask.mean(axis=1) > 0.004)[0]
+            dark_rows = np.where(dark_mask[:, : max(500, int(w * 0.55))].mean(axis=1) > 0.08)[0]
+            header_signal = red_rows.size >= 4 and dark_rows.size >= 2
+            info.update({
+                "elevenst_trim_header_signal": bool(header_signal),
+                "elevenst_trim_header_red_rows": int(red_rows.size),
+                "elevenst_trim_header_dark_rows": int(dark_rows.size),
+            })
+
+            if not header_signal:
+                info["elevenst_trim_rejected_reason"] = "missing_repeated_11st_header"
+                return info
+            if crop_ratio < 0.80 or removed_height > 9000 or removed_ratio > 0.22:
                 info["elevenst_trim_rejected_reason"] = "candidate_not_safe_tail"
                 return info
 
@@ -898,6 +997,18 @@ def _trim_coupang_repeated_tail(path: str) -> Dict:
                     continue
                 crop_y = max(1200, group_start - 220)
                 if crop_y <= int(h * 0.54) or h - crop_y < 1300:
+                    continue
+                removed_height = h - crop_y
+                crop_ratio = crop_y / float(max(h, 1))
+                removed_ratio = removed_height / float(max(h, 1))
+                info.update({
+                    "coupang_trim_candidate_y": int(crop_y),
+                    "coupang_trim_candidate_removed": int(removed_height),
+                    "coupang_trim_candidate_ratio": round(crop_ratio, 4),
+                    "coupang_trim_candidate_removed_ratio": round(removed_ratio, 4),
+                })
+                if crop_ratio < 0.80 or removed_ratio > 0.22 or removed_height > 9000:
+                    info["coupang_trim_rejected_reason"] = "candidate_not_safe_tail"
                     continue
                 trimmed = rgb.crop((0, 0, w, crop_y))
                 tmp_path = f"{path}.coupang-trim.tmp.jpg"
@@ -2311,7 +2422,12 @@ class DetailScraper:
                 return Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
 
             def _prime_lazy_images_via_cdp() -> Dict:
-                message = _cdp_eval(r"""
+                lazy_hard_limit = 70000 if is_naver else 180000
+                lazy_max_passes = 3 if is_naver else 12
+                lazy_stable_rounds = 1 if is_naver else 3
+                lazy_delay_ms = 80 if is_naver else 180
+                lazy_timeout = 35 if is_naver else 130
+                lazy_script = r"""
 (() => new Promise(async (resolve) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const pageHeight = () => Math.max(
@@ -2324,14 +2440,14 @@ class DetailScraper:
   let stableRounds = 0;
   let passes = 0;
   let totalScrolls = 0;
-  const hardLimit = 90000;
+  const hardLimit = __HARD_LIMIT__;
 
-  while (passes < 8 && stableRounds < 2) {
+  while (passes < __MAX_PASSES__ && stableRounds < __STABLE_ROUNDS__) {
     const startHeight = Math.min(pageHeight(), hardLimit);
     for (let y = 0; y <= startHeight + step; y += step) {
       window.scrollTo(0, y);
       totalScrolls += 1;
-      await sleep(150);
+      await sleep(__DELAY_MS__);
     }
     await sleep(700);
     const currentHeight = Math.min(pageHeight(), hardLimit);
@@ -2357,7 +2473,15 @@ class DetailScraper:
     lazyScrolls: totalScrolls
   });
 })())
-""", timeout=75)
+"""
+                lazy_script = (
+                    lazy_script
+                    .replace("__HARD_LIMIT__", str(lazy_hard_limit))
+                    .replace("__MAX_PASSES__", str(lazy_max_passes))
+                    .replace("__STABLE_ROUNDS__", str(lazy_stable_rounds))
+                    .replace("__DELAY_MS__", str(lazy_delay_ms))
+                )
+                message = _cdp_eval(lazy_script, timeout=lazy_timeout)
                 value = (((message or {}).get("result") or {}).get("result") or {}).get("value") or {}
                 if isinstance(value, dict) and value:
                     return value
@@ -2382,8 +2506,8 @@ class DetailScraper:
                     stable_rounds = 0
                     passes = 0
                     total_scrolls = 0
-                    hard_limit = 90000
-                    while passes < 5 and stable_rounds < 2:
+                    hard_limit = lazy_hard_limit
+                    while passes < (3 if is_naver else 12) and stable_rounds < lazy_stable_rounds:
                         current_limit = min(max(_read_scroll_height(), viewport_height), hard_limit)
                         for y in range(0, current_limit + step, step):
                             _cdp_eval(f"window.scrollTo(0,{int(y)}); true", timeout=3)
@@ -2415,6 +2539,80 @@ class DetailScraper:
                     result.setdefault("diagnostics", {})["lazy_prime_error"] = str(exc)
                     return {}
 
+            def _save_cdp_pieces(
+                base_path: str,
+                pieces: List[Image.Image],
+                quality: int,
+                mode_prefix: str,
+            ) -> tuple[List[str], Dict]:
+                """Save CDP tiles without creating oversized JPEG files."""
+                total_height = sum(piece.height for piece in pieces)
+                width = pieces[0].width if pieces else 0
+                max_part_height = 60000
+                for old_path in glob.glob(os.path.join(output_dir, "cdp_part_*.jpg")):
+                    try:
+                        os.remove(old_path)
+                    except Exception:
+                        pass
+
+                def _save_chunk(path: str, chunk: List[Image.Image]) -> None:
+                    canvas = Image.new("RGB", (width, sum(piece.height for piece in chunk)), "white")
+                    y_offset = 0
+                    for piece in chunk:
+                        canvas.paste(piece, (0, y_offset))
+                        y_offset += piece.height
+                    canvas.save(path, "JPEG", quality=quality)
+                    canvas.close()
+
+                try:
+                    if total_height <= max_part_height:
+                        _save_chunk(base_path, pieces)
+                        return [base_path], {
+                            "capture_mode": f"{mode_prefix}_tiled_exact" if len(pieces) > 1 else f"{mode_prefix}_single",
+                            "cdp_tiles": len(pieces),
+                            "cdp_chunked": False,
+                            "cdp_chunk_count": 1,
+                            "cdp_max_part_height": max_part_height,
+                        }
+
+                    if os.path.exists(base_path):
+                        try:
+                            os.remove(base_path)
+                        except Exception:
+                            pass
+
+                    saved_paths: List[str] = []
+                    current: List[Image.Image] = []
+                    current_height = 0
+                    part_index = 1
+                    for piece in pieces:
+                        if current and current_height + piece.height > max_part_height:
+                            part_path = os.path.join(output_dir, f"cdp_part_{part_index:03d}.jpg")
+                            _save_chunk(part_path, current)
+                            saved_paths.append(part_path)
+                            part_index += 1
+                            current = []
+                            current_height = 0
+                        current.append(piece)
+                        current_height += piece.height
+                    if current:
+                        part_path = os.path.join(output_dir, f"cdp_part_{part_index:03d}.jpg")
+                        _save_chunk(part_path, current)
+                        saved_paths.append(part_path)
+                    return saved_paths, {
+                        "capture_mode": f"{mode_prefix}_chunked",
+                        "cdp_tiles": len(pieces),
+                        "cdp_chunked": True,
+                        "cdp_chunk_count": len(saved_paths),
+                        "cdp_max_part_height": max_part_height,
+                    }
+                finally:
+                    for piece in pieces:
+                        try:
+                            piece.close()
+                        except Exception:
+                            pass
+
             def _capture_fullpage_via_cdp() -> bool:
                 if not debug_port:
                     return False
@@ -2433,12 +2631,19 @@ class DetailScraper:
                         int(layout_viewport.get("pageY", 0) or 0) + int(layout_viewport.get("clientHeight") or 0),
                     )
                     width = max(320, min(content_width, viewport_width, 2200))
-                    height = max(320, min(content_height, 90000))
+                    height_limit = 70000 if is_naver else 180000
+                    capture_y = 0
+                    capture_region_info = {"cdp_detail_start_strategy": "full_document"}
+                    height = max(320, min(content_height, height_limit))
                     if height < 700:
                         return False
 
                     fullpage_path = os.path.join(output_dir, f"{product_id}_fullpage.jpg")
-                    max_single_height = 28000
+                    # Very tall single CDP screenshots can repeat the top product area
+                    # on some commerce pages. Keep the stable Naver/11st paths as-is,
+                    # but tile the three flaky CDP commerce pages more aggressively.
+                    use_commerce_tiles = bool(is_coupang or is_gmarket or is_auction)
+                    max_single_height = 6500 if use_commerce_tiles else 28000
                     if height <= max_single_height:
                         screenshot = _cdp_call(
                             "Page.captureScreenshot",
@@ -2449,7 +2654,7 @@ class DetailScraper:
                                 "captureBeyondViewport": True,
                                 "clip": {
                                     "x": 0,
-                                    "y": 0,
+                                    "y": capture_y,
                                     "width": width,
                                     "height": height,
                                     "scale": 1,
@@ -2463,10 +2668,15 @@ class DetailScraper:
                         image = _decode_cdp_image(data)
                         image.save(fullpage_path, "JPEG", quality=86)
                         image.close()
-                        capture_mode = "cdp_fullpage"
-                        tiles = 1
+                        saved_paths = [fullpage_path]
+                        capture_stats = {
+                            "capture_mode": "cdp_fullpage",
+                            "cdp_tiles": 1,
+                            "cdp_chunked": False,
+                            "cdp_chunk_count": 1,
+                        }
                     else:
-                        tile_height = 9000
+                        tile_height = 6000 if use_commerce_tiles else 9000
                         pieces = []
                         y = 0
                         while y < height:
@@ -2480,7 +2690,7 @@ class DetailScraper:
                                     "captureBeyondViewport": True,
                                     "clip": {
                                         "x": 0,
-                                        "y": y,
+                                        "y": capture_y + y,
                                         "width": width,
                                         "height": h,
                                         "scale": 1,
@@ -2495,42 +2705,38 @@ class DetailScraper:
                                 return False
                             pieces.append(_decode_cdp_image(data))
                             y += h
-                        stitched = Image.new("RGB", (width, sum(piece.height for piece in pieces)), "white")
-                        y_offset = 0
-                        for piece in pieces:
-                            stitched.paste(piece, (0, y_offset))
-                            y_offset += piece.height
-                            piece.close()
-                        stitched.save(fullpage_path, "JPEG", quality=86)
-                        stitched.close()
-                        capture_mode = "cdp_tiled_exact"
-                        tiles = len(pieces)
+                        saved_paths, capture_stats = _save_cdp_pieces(fullpage_path, pieces, 86, "cdp")
 
                     postprocess_info = {}
-                    if is_coupang and getattr(config, "ENABLE_COUPANG_REPEAT_TRIM", True):
-                        postprocess_info.update(_trim_coupang_repeated_tail(fullpage_path))
-                    if is_elevenst and getattr(config, "ENABLE_ELEVENST_REPEAT_TRIM", True):
-                        postprocess_info.update(_trim_elevenst_repeated_tail(fullpage_path))
-                    if is_auction and getattr(config, "ENABLE_AUCTION_REPEAT_TRIM", True):
-                        postprocess_info.update(_trim_auction_repeated_header(fullpage_path))
-                    if is_naver:
-                        postprocess_info.update(_postprocess_naver_capture(fullpage_path))
+                    if len(saved_paths) == 1:
+                        fullpage_path = saved_paths[0]
+                        if is_coupang and getattr(config, "ENABLE_COUPANG_REPEAT_TRIM", True):
+                            postprocess_info.update(_trim_coupang_repeated_tail(fullpage_path))
+                        if is_elevenst and getattr(config, "ENABLE_ELEVENST_REPEAT_TRIM", True):
+                            postprocess_info.update(_trim_elevenst_repeated_tail(fullpage_path))
+                        if is_auction and getattr(config, "ENABLE_AUCTION_REPEAT_TRIM", True):
+                            postprocess_info.update(_trim_auction_repeated_header(fullpage_path))
+                        if is_naver:
+                            postprocess_info.update(_postprocess_naver_capture(fullpage_path))
+                    else:
+                        postprocess_info["postprocess_skipped_reason"] = "chunked_cdp_capture"
 
                     quality = _set_result_quality(
                         result,
-                        fullpage_path,
+                        saved_paths[0],
                         {
                             "scroll_driver": scroll_driver,
                             "target_title": page_title,
                             "detail_expanded": bool(screen_detail_expanded),
-                            "capture_mode": capture_mode,
-                            "cdp_tiles": tiles,
                             "cdp_width": width,
                             "cdp_height": height,
+                            "cdp_capture_y": int(capture_y),
                             "lazy_scroll_height": int(lazy_stats.get("scrollHeight") or 0),
                             "lazy_passes": int(lazy_stats.get("lazyPasses") or 0),
                             "lazy_stable_rounds": int(lazy_stats.get("lazyStableRounds") or 0),
                             "lazy_scrolls": int(lazy_stats.get("lazyScrolls") or 0),
+                            **capture_region_info,
+                            **capture_stats,
                             **postprocess_info,
                         },
                     )
@@ -2538,9 +2744,16 @@ class DetailScraper:
                         result["screenshots"] = []
                         result["diagnostics"]["cdp_fullpage_rejected"] = quality
                         return False
-                    result["screenshots"] = [fullpage_path]
+                    result["screenshots"] = saved_paths
                     result["status"] = "success"
-                    logger.info("[Detail] CDP fullpage capture success for %s: %sx%s mode=%s", product_id, width, height, capture_mode)
+                    logger.info(
+                        "[Detail] CDP fullpage capture success for %s: %sx%s mode=%s chunks=%s",
+                        product_id,
+                        width,
+                        height,
+                        capture_stats.get("capture_mode"),
+                        len(saved_paths),
+                    )
                     return True
                 except Exception as exc:
                     result.setdefault("diagnostics", {})["cdp_fullpage_error"] = str(exc)
@@ -2559,7 +2772,8 @@ class DetailScraper:
                     x = max(0, int(x))
                     y = max(0, int(y))
                     width = max(320, min(int(width), 2200))
-                    height = max(320, min(int(height), 90000))
+                    height_limit = 70000 if is_naver else 180000
+                    height = max(320, min(int(height), height_limit))
                     max_single_height = 28000
                     if height <= max_single_height:
                         screenshot = _cdp_call(
@@ -2582,6 +2796,9 @@ class DetailScraper:
                         return {
                             "capture_mode": f"{mode_prefix}_single",
                             "cdp_tiles": 1,
+                            "cdp_chunked": False,
+                            "cdp_chunk_count": 1,
+                            "screenshots": [fullpage_path],
                             "cdp_x": x,
                             "cdp_y": y,
                             "cdp_width": width,
@@ -2617,17 +2834,10 @@ class DetailScraper:
                             return None
                         pieces.append(_decode_cdp_image(data))
                         tile_y += tile_h
-                    stitched = Image.new("RGB", (width, sum(piece.height for piece in pieces)), "white")
-                    y_offset = 0
-                    for piece in pieces:
-                        stitched.paste(piece, (0, y_offset))
-                        y_offset += piece.height
-                        piece.close()
-                    stitched.save(fullpage_path, "JPEG", quality=88)
-                    stitched.close()
+                    saved_paths, stats = _save_cdp_pieces(fullpage_path, pieces, 88, mode_prefix)
                     return {
-                        "capture_mode": f"{mode_prefix}_tiled",
-                        "cdp_tiles": len(pieces),
+                        **stats,
+                        "screenshots": saved_paths,
                         "cdp_x": x,
                         "cdp_y": y,
                         "cdp_width": width,
@@ -2743,10 +2953,15 @@ class DetailScraper:
                     )
                     if not capture_stats:
                         return False
-                    postprocess_info = _postprocess_naver_capture(fullpage_path)
+                    capture_paths = capture_stats.pop("screenshots", [fullpage_path])
+                    postprocess_info = {}
+                    if len(capture_paths) == 1:
+                        postprocess_info = _postprocess_naver_capture(capture_paths[0])
+                    else:
+                        postprocess_info["postprocess_skipped_reason"] = "chunked_cdp_capture"
                     quality = _set_result_quality(
                         result,
-                        fullpage_path,
+                        capture_paths[0],
                         {
                             "scroll_driver": scroll_driver,
                             "target_title": page_title,
@@ -2767,7 +2982,7 @@ class DetailScraper:
                         result["screenshots"] = []
                         result["diagnostics"]["naver_cdp_region_quality_rejected"] = quality
                         return False
-                    result["screenshots"] = [fullpage_path]
+                    result["screenshots"] = capture_paths
                     result["status"] = "success"
                     logger.info(
                         "[Detail] Naver detail-region CDP capture success for %s: %sx%s images=%s mode=%s",
@@ -2996,7 +3211,218 @@ class DetailScraper:
                         time.sleep(0.7)
                         return
 
-                    cdp_expanded = _expand_detail_more_via_cdp()
+                    def _expand_coupang_auction_detail_more_via_cdp() -> bool:
+                        """Coupang/Auction: click only the real detail-more button, not generic accordions."""
+                        if not (debug_port and (is_coupang or is_auction)):
+                            return False
+                        keywords = (
+                            ["상품정보더보기", "상세정보더보기", "상품상세더보기"]
+                            if is_coupang
+                            else ["상세정보더보기", "상품상세더보기", "상품정보더보기"]
+                        )
+                        script = r"""
+(() => {
+  const keywords = __KEYWORDS__;
+  const compact = (text) => String(text || '').replace(/\s+/g, '').trim();
+  const textOf = (el) => compact((el.innerText || el.textContent || el.getAttribute('aria-label') || ''));
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 30 || rect.height < 14) return false;
+    const cs = el.ownerDocument.defaultView.getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0.05;
+  };
+  const safeButtonText = (t) => {
+    if (!t || t.length > 80) return false;
+    if (t.includes('필수표기정보더보기') || t.includes('쿠폰') || t.includes('구매') || t.includes('장바구니')) return false;
+    return keywords.some((kw) => t.includes(kw));
+  };
+  const docs = [document];
+  for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+    try {
+      if (frame.contentDocument) docs.push(frame.contentDocument);
+    } catch (_) {}
+  }
+  const selectors = [
+    'button', 'a', '[role="button"]', 'input[type="button"]', 'input[type="submit"]',
+    '[class*="detail"][class*="more"]', '[class*="more"][class*="detail"]',
+    '[id*="detail"][id*="more"]', '[id*="more"][id*="detail"]'
+  ];
+  const candidates = [];
+  for (const doc of docs) {
+    const win = doc.defaultView || window;
+    for (const selector of selectors) {
+      for (const el of Array.from(doc.querySelectorAll(selector)).slice(0, 2000)) {
+        const t = textOf(el) || compact(el.value || '');
+        if (!safeButtonText(t) || !visible(el)) continue;
+        const rect = el.getBoundingClientRect();
+        const frameEl = win.frameElement;
+        const frameRect = frameEl ? frameEl.getBoundingClientRect() : {top: 0, left: 0};
+        const absoluteTop = rect.top + (win.scrollY || 0) + frameRect.top + window.scrollY;
+        if (absoluteTop < 260) continue;
+        const area = rect.width * rect.height;
+        const score = (keywords.findIndex((kw) => t.includes(kw)) + 1) * -1000 + absoluteTop - Math.min(area, 80000) / 120;
+        candidates.push({el, win, text: t, top: absoluteTop, score});
+      }
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score);
+  const best = candidates[0];
+  if (!best) return {clicked: false, reason: 'not_found'};
+  try {
+    best.el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+    best.el.click();
+    return {clicked: true, text: best.text, top: Math.round(best.top)};
+  } catch (err) {
+    return {clicked: false, reason: String(err && err.message || err)};
+  }
+})()
+"""
+                        try:
+                            import json
+                            for scroll_y in (0, 900, 1800, 3000, 4500, 6500):
+                                _cdp_eval(f"window.scrollTo(0,{int(scroll_y)}); true;", timeout=4)
+                                time.sleep(0.35)
+                                msg = _cdp_eval(script.replace("__KEYWORDS__", json.dumps(keywords, ensure_ascii=False)), timeout=8)
+                                val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                                if isinstance(val, dict) and val.get("clicked"):
+                                    logger.info(
+                                        "[Detail] %s exact detail-more clicked via CDP: %s at y=%s",
+                                        "coupang" if is_coupang else "auction",
+                                        val.get("text"),
+                                        val.get("top"),
+                                    )
+                                    time.sleep(1.8)
+                                    return True
+                            return False
+                        except Exception as exc:
+                            logger.debug("[Detail] exact detail-more CDP skipped: %s", exc)
+                            return False
+
+                    def _expand_auction_detail_more() -> bool:
+                        """옥션 전용: CDP로 버튼 위치 찾은 후 실제 마우스 클릭."""
+                        if not (debug_port and is_auction):
+                            return False
+                        try:
+                            _AUCTION_FIND_JS = """(() => {
+  const kwds = ['상세정보더보기','상세정보 더보기','상품상세더보기'];
+  for (const el of Array.from(document.querySelectorAll('button,a,div,span,p,input'))) {
+    const t = (el.innerText||el.textContent||'').replace(/\\s+/g,'').trim();
+    if (!kwds.some(k=>t.includes(k))) continue;
+    const cs = window.getComputedStyle(el);
+    if (cs.display==='none'||cs.visibility==='hidden') continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 20 || rect.height < 10) continue;
+    if (rect.top + window.scrollY < 200) continue;
+    el.scrollIntoView({block:'center',behavior:'instant'});
+    const r2 = el.getBoundingClientRect();
+    return {x:Math.round(r2.left+r2.width/2), y:Math.round(r2.top+r2.height/2), found:true};
+  }
+  return {found:false};
+})()"""
+                            for scroll_y in (0, 1500, 3000, 5000):
+                                _cdp_eval(f"window.scrollTo(0,{scroll_y}); true;")
+                                time.sleep(0.8)
+                                msg = _cdp_eval(_AUCTION_FIND_JS)
+                                val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                                if isinstance(val, dict) and val.get("found"):
+                                    vx = int(val.get("x") or 0)
+                                    vy = int(val.get("y") or 0)
+                                    wl, wt, _, _ = win32gui.GetWindowRect(hwnd_target)
+                                    _win_click(wl + vx, wt + CHROME_UI + vy)
+                                    logger.info("[Detail] auction detail-more clicked via CDP pos (%s,%s)", wl + vx, wt + CHROME_UI + vy)
+                                    time.sleep(1.8)
+                                    return True
+                        except Exception as exc:
+                            logger.debug("[Detail] auction expand skipped: %s", exc)
+                        return False
+
+                    def _click_remaining_auction_detail_more_after_cdp() -> bool:
+                        """Auction only: if CDP reported a click but the button remains, do one real click."""
+                        if not (debug_port and is_auction):
+                            return False
+                        script = r"""
+(() => {
+  const keywords = [
+    '\uc0c1\uc138\uc815\ubcf4\ub354\ubcf4\uae30',
+    '\uc0c1\ud488\uc0c1\uc138\ub354\ubcf4\uae30',
+    '\uc0c1\ud488\uc815\ubcf4\ub354\ubcf4\uae30'
+  ];
+  const badWords = [
+    '\ud544\uc218\ud45c\uae30\uc815\ubcf4\ub354\ubcf4\uae30',
+    '\ucfe0\ud3f0',
+    '\uad6c\ub9e4',
+    '\uc7a5\ubc14\uad6c\ub2c8'
+  ];
+  const compact = (text) => String(text || '').replace(/\s+/g, '').trim();
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 40 || rect.height < 18) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0.05;
+  };
+  const candidates = [];
+  const selectors = 'button,a,[role="button"],input[type="button"],input[type="submit"],div,span,p';
+  for (const el of Array.from(document.querySelectorAll(selectors)).slice(0, 5000)) {
+    const text = compact(el.innerText || el.textContent || el.getAttribute('aria-label') || el.value || '');
+    if (!text || text.length > 90) continue;
+    if (badWords.some((word) => text.includes(word))) continue;
+    if (!keywords.some((word) => text.includes(word))) continue;
+    if (!visible(el)) continue;
+    const rect = el.getBoundingClientRect();
+    const absoluteTop = Math.round(rect.top + window.scrollY);
+    if (absoluteTop < 260) continue;
+    candidates.push({el, text, absoluteTop, area: rect.width * rect.height});
+  }
+  candidates.sort((a, b) => a.absoluteTop - b.absoluteTop || b.area - a.area);
+  const best = candidates[0];
+  if (!best) return {found: false};
+  best.el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+  const rect = best.el.getBoundingClientRect();
+  return {
+    found: true,
+    x: Math.round(rect.left + rect.width / 2),
+    y: Math.round(rect.top + rect.height / 2),
+    text: best.text,
+    top: best.absoluteTop
+  };
+})()
+"""
+                        try:
+                            for scroll_y in (0, 1800, 3600, 5600, 7600, 9800):
+                                _cdp_eval(f"window.scrollTo(0,{int(scroll_y)}); true;", timeout=4)
+                                time.sleep(0.35)
+                                msg = _cdp_eval(script, timeout=8)
+                                val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                                if not (isinstance(val, dict) and val.get("found")):
+                                    continue
+                                vx = int(val.get("x") or 0)
+                                vy = int(val.get("y") or 0)
+                                if vx <= 0 or vy <= 0:
+                                    continue
+                                wl, wt, _, _ = win32gui.GetWindowRect(hwnd_target)
+                                _win_click(wl + vx, wt + CHROME_UI + vy)
+                                logger.info(
+                                    "[Detail] auction remaining detail-more clicked physically: %s at y=%s",
+                                    val.get("text"),
+                                    val.get("top"),
+                                )
+                                time.sleep(1.8)
+                                return True
+                            return False
+                        except Exception as exc:
+                            logger.debug("[Detail] auction remaining detail-more check skipped: %s", exc)
+                            return False
+
+                    if is_coupang or is_auction:
+                        cdp_expanded = _expand_coupang_auction_detail_more_via_cdp()
+                        if is_auction:
+                            cdp_expanded = _click_remaining_auction_detail_more_after_cdp() or cdp_expanded
+                            if not cdp_expanded:
+                                cdp_expanded = _expand_auction_detail_more()
+                    else:
+                        cdp_expanded = _expand_detail_more_via_cdp()
                     if cdp_expanded and (is_coupang or is_gmarket or is_auction):
                         screen_detail_expanded = True
                         _pag.hotkey("ctrl", "home")
@@ -3009,11 +3435,20 @@ class DetailScraper:
                                 pass
                         time.sleep(0.5)
                         return
-                    for _ in range(12 if is_coupang else 10 if is_gmarket else 7):
+                    max_scroll_iters = 12 if is_coupang else 10 if is_gmarket else 12 if is_auction else 7
+                    for _ in range(max_scroll_iters):
                         if _click_detail_more_button_by_color():
                             screen_detail_expanded = True
                             break
-                        _pag.press("pagedown")
+                        if render_hwnd:
+                            try:
+                                win32api.SendMessage(render_hwnd, win32con.WM_KEYDOWN, VK_NEXT, NEXT_DN)
+                                time.sleep(0.04)
+                                win32api.SendMessage(render_hwnd, win32con.WM_KEYUP, VK_NEXT, NEXT_UP)
+                            except Exception:
+                                _pag.press("pagedown")
+                        else:
+                            _pag.press("pagedown")
                         time.sleep(0.45)
                     _pag.hotkey("ctrl", "home")
                     if render_hwnd:
@@ -3237,14 +3672,14 @@ class DetailScraper:
                 nonlocal naver_rebuilt_detail_page, screen_detail_expanded
                 if not is_naver:
                     return False
-                marker = "JEPUM_NAVER_REBUILT_V73"
+                marker = "JEPUM_NAVER_REBUILT_V75"
                 safe_product_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(product_id))[:80] or "naver"
                 download_name = f"jepum_naver_detail_{safe_product_id}_{int(time.time() * 1000)}.json"
                 download_dir = Path(os.path.expanduser("~")) / "Downloads"
                 download_path = download_dir / download_name
                 script = r"""
                 (async()=>{
-                const MARK='JEPUM_NAVER_REBUILT_V73';
+                const MARK='JEPUM_NAVER_REBUILT_V75';
                 const DOWNLOAD_NAME='__DOWNLOAD_NAME__';
                 document.title=MARK+' running';
                 const sleep=m=>new Promise(r=>setTimeout(r,m));
@@ -3252,15 +3687,16 @@ class DetailScraper:
                 const text=e=>String((e&&e.innerText)||(e&&e.textContent)||'').replace(/\s+/g,' ').trim();
                 const visible=e=>{const r=e.getBoundingClientRect();return r.width>20&&r.height>12&&r.bottom>0&&r.top<innerHeight};
                 const expandRe=/(\uc0c1\uc138|\uc0c1\ud488).*(\ub354\ubcf4\uae30|\ud3bc\uccd0\ubcf4\uae30)|\ud3bc\uccd0\ubcf4\uae30/;
+                let expandBottom=0;
                 for(const e of Array.from(document.querySelectorAll('button,a,[role="button"]'))){
                 const t=text(e);if(!t||!visible(e)||!expandRe.test(t))continue;
-                try{e.scrollIntoView({block:'center'});await sleep(180);e.click();await sleep(700)}catch(_){}
+                try{e.scrollIntoView({block:'center'});await sleep(180);const r=e.getBoundingClientRect();const y=Math.round(r.bottom+scrollY);if(y>200)expandBottom=expandBottom?Math.min(expandBottom,y):y;e.click();await sleep(700)}catch(_){}
                 }
                 let prev=0,stable=0;
-                for(let pass=0;pass<7&&stable<3;pass++){
-                const maxY=Math.min(pageH(),320000),step=Math.max(560,Math.floor(innerHeight*.72));
-                for(let y=0;y<=maxY+step;y+=step){scrollTo(0,y);await sleep(90)}
-                await sleep(700);const now=pageH();if(Math.abs(now-prev)<80)stable++;else stable=0;prev=now;
+                for(let pass=0;pass<4&&stable<2;pass++){
+                const maxY=Math.min(pageH(),180000),step=Math.max(680,Math.floor(innerHeight*.86));
+                for(let y=0;y<=maxY+step;y+=step){scrollTo(0,y);await sleep(65)}
+                await sleep(550);const now=pageH();if(Math.abs(now-prev)<80)stable++;else stable=0;prev=now;
                 }
                 scrollTo(0,0);await sleep(450);
                 const detailRe=/\uc0c1\ud488\uc0c1\uc138|\uc0c1\uc138\uc815\ubcf4|\uc0c1\uc138\uc124\uba85/;
@@ -3270,6 +3706,7 @@ class DetailScraper:
                 const r=e.getBoundingClientRect(),y=Math.round(r.top+scrollY);
                 if(r.width>30&&r.height>8&&y>180)detailTop=detailTop?Math.min(detailTop,y):y;
                 }
+                if(expandBottom)detailTop=Math.max(detailTop||0,expandBottom+40);
                 if(!detailTop||detailTop>pageH()-600)detailTop=Math.min(Math.max(560,Math.floor(innerHeight*.62)),Math.floor(pageH()*.32));
                 const esc=s=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
                 function srcOf(img){let src=img.currentSrc||img.src||img.getAttribute('data-src')||img.getAttribute('data-lazy-src')||img.getAttribute('data-original')||'';src=String(src||'');if(src.startsWith('//'))src=location.protocol+src;return src}
@@ -3280,7 +3717,8 @@ class DetailScraper:
                 const key=src.split('?')[0];if(seen.has(key))continue;
                 const top=Math.round(r.top+scrollY),left=Math.round(r.left),dw=Math.round(r.width||0),dh=Math.round(r.height||0);
                 const w=Math.round(img.naturalWidth||dw||0),h=Math.round(img.naturalHeight||dh||0),mw=Math.max(w,dw),mh=Math.max(h,dh),cx=left+(dw/2);
-                if(!loose&&top<detailTop-220)continue;
+                const minTop=Math.max(320,detailTop-80);
+                if(top<minTop)continue;
                 if(cx>innerWidth*.82||left>innerWidth*.76)continue;
                 if(dw>0&&dw<220&&!loose)continue;
                 if(mw<220||mh<140||mw*mh<36000)continue;
@@ -3291,14 +3729,14 @@ class DetailScraper:
                 }
                 function collectTexts(){
                 const out=[],seen=new Set();
-                const uiRe=/\uad6c\ub9e4|\uc7a5\ubc14\uad6c\ub2c8|\ucc1c\ud558\uae30|\uc120\ubb3c\ud558\uae30|\ud1a1\ud1a1|\ub9ac\ubdf0|\ubb38\uc758|\ubc30\uc1a1\uc815\ubcf4|\uad50\ud658|\ubc18\ud488|\uc635\uc158|\uac80\uc0c9|\ub85c\uadf8\uc778|\ud310\ub9e4\uc790|\uc2a4\ub9c8\ud2b8\uc2a4\ud1a0\uc5b4|\ub124\uc774\ubc84|\ucd94\ucc9c|\uc0c1\uc138\uc815\ubcf4|\ud3bc\uccd0\ubcf4\uae30|\uac19\uc774 \ub458\ub7ec\ubcfc/;
+                const uiRe=/\uad6c\ub9e4|\uc7a5\ubc14\uad6c\ub2c8|\ucc1c\ud558\uae30|\uc120\ubb3c\ud558\uae30|\ud1a1\ud1a1|\ub9ac\ubdf0|\ubb38\uc758|\ubc30\uc1a1\uc815\ubcf4|\ubc30\uc1a1\ubc29\ubc95|\ubc30\uc1a1\ube44|\ud0dd\ubc30|\uacb0\uc81c|\uc785\ub825\ud558\uc9c0|\uc8fc\ubb38 \uc2dc|\uc0c1\ud488\ubc88\ud638|\ubaa8\ub378\uba85|\uc6d0\uc0b0\uc9c0|\uc635\uc158|\uad50\ud658|\ubc18\ud488|\uac80\uc0c9|\ub85c\uadf8\uc778|\ud310\ub9e4\uc790|\uc2a4\ub9c8\ud2b8\uc2a4\ud1a0\uc5b4|\ub124\uc774\ubc84|\ucd94\ucc9c|\uc0c1\uc138\uc815\ubcf4|\ud3bc\uccd0\ubcf4\uae30|\uac19\uc774 \ub458\ub7ec\ubcfc/;
                 const skipSel='header,nav,footer,aside,[role="navigation"],[class*="floating"],[class*="sticky"],[class*="option"],[class*="purchase"],[class*="order"],[class*="review"],[class*="qna"],[class*="recommend"]';
                 for(const e of Array.from(document.querySelectorAll('h1,h2,h3,h4,p,li,dt,dd,strong,b,em,span,div'))){
                 if(e.closest(skipSel))continue;
                 const r=e.getBoundingClientRect(),top=Math.round(r.top+scrollY),left=Math.round(r.left),cx=left+(r.width/2);
                 if(top<detailTop-180||r.width<120||r.height<12||cx>innerWidth*.82||left>innerWidth*.78)continue;
                 let t=text(e);if(!t||t.length<8||t.length>420)continue;
-                if(uiRe.test(t)&&t.length<120)continue;
+                if(uiRe.test(t))continue;
                 const childText=Array.from(e.children||[]).map(c=>text(c)).filter(Boolean).join(' ');
                 if(childText&&childText.length>=t.length*.82)continue;
                 const key=t.replace(/\s+/g,'').slice(0,180);if(seen.has(key))continue;seen.add(key);
@@ -3309,18 +3747,14 @@ class DetailScraper:
                 }
                 let arr=collect(false);if(arr.length<3)arr=collect(true);if(arr.length>260)arr=arr.slice(0,260);
                 if(!arr.length){document.title=MARK+' failed 0 images';return}
-                const texts=collectTexts();
+                const firstImageTop=arr.length?arr[0].top:detailTop;
+                const texts=collectTexts().filter(o=>o.top>=firstImageTop-40).slice(0,80);
                 const blocks=arr.map(o=>Object.assign({type:'image'},o)).concat(texts).sort((a,b)=>(a.top-b.top)||((a.left||0)-(b.left||0)));
-                try{
-                const payload=JSON.stringify({marker:MARK,count:arr.length,textCount:texts.length,images:arr,texts,blocks});
-                const blob=new Blob([payload],{type:'application/json'});
-                const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=DOWNLOAD_NAME;
-                document.body.appendChild(a);a.click();setTimeout(()=>{try{URL.revokeObjectURL(a.href);a.remove()}catch(_){}} ,5000);
-                }catch(_){}
+                try{const payloadObj={marker:MARK,count:arr.length,textCount:texts.length,images:arr,texts,blocks};window.__JEPUM_NAVER_DETAIL_PAYLOAD=payloadObj;sessionStorage.setItem('__JEPUM_NAVER_DETAIL_PAYLOAD',JSON.stringify(payloadObj));}catch(_){}
                 const html=blocks.map(o=>o.type==='text'?'<p class="txt">'+esc(o.text)+'</p>':'<img src="'+esc(o.src)+'" loading="eager" decoding="sync">').join('');
                 const css='html,body{margin:0;padding:0;background:#fff;color:#111}body{font-family:Arial,sans-serif}.wrap{width:1040px;max-width:calc(100vw - 240px);margin:0 auto;padding:24px 0 90px}.meta{font-size:13px;color:#777;margin:0 0 18px}.meta b{color:#111}.txt{font-size:22px;line-height:1.62;text-align:center;white-space:pre-wrap;margin:18px auto 22px;max-width:900px;font-weight:500}img{display:block;max-width:100%;height:auto;margin:0 auto 18px;background:#fff}hr{border:0;border-top:1px solid #eee;margin:16px 0}';
                 document.open();
-                document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+MARK+' '+arr.length+' images '+texts.length+' texts</title><style>'+css+'</style></head><body><main class="wrap"><p class="meta"><b>Naver detail rebuild</b> - '+arr.length+' images / '+texts.length+' text blocks</p><hr>'+html+'</main></body></html>');
+                document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+MARK+' '+arr.length+' images '+texts.length+' texts</title><style>'+css+'</style></head><body><main class="wrap">'+html+'</main></body></html>');
                 document.close();setTimeout(()=>scrollTo(0,0),700);
                 })()
                 """
@@ -3329,7 +3763,7 @@ class DetailScraper:
                 if not _run_address_bar_javascript(script, wait_sec=1.0):
                     return False
                 title_text = ""
-                deadline = time.time() + 260.0
+                deadline = time.time() + 95.0
                 while time.time() < deadline:
                     title_text = win32gui.GetWindowText(hwnd_target) or ""
                     if marker in title_text and (" images" in title_text or " failed" in title_text):
@@ -3349,22 +3783,39 @@ class DetailScraper:
                         image_count = int(count_match.group(1))
                     except Exception:
                         image_count = 0
-                json_deadline = time.time() + 90.0
-                while time.time() < json_deadline and not download_path.exists():
-                    time.sleep(0.35)
-                if download_path.exists():
-                    json_target = os.path.join(output_dir, f"{product_id}_naver_images.json")
+                json_target = os.path.join(output_dir, f"{product_id}_naver_images.json")
+                payload = None
+                try:
+                    import json
+                    payload_message = _cdp_eval(
+                        "(window.__JEPUM_NAVER_DETAIL_PAYLOAD || JSON.parse(sessionStorage.getItem('__JEPUM_NAVER_DETAIL_PAYLOAD') || 'null'))",
+                        timeout=8,
+                    )
+                    payload_value = (((payload_message or {}).get("result") or {}).get("result") or {}).get("value")
+                    if isinstance(payload_value, dict):
+                        payload = payload_value
+                        with open(json_target, "w", encoding="utf-8") as handle:
+                            json.dump(payload, handle, ensure_ascii=False)
+                except Exception as exc:
+                    result.setdefault("diagnostics", {})["naver_payload_read_error"] = str(exc)
+                if payload is None and download_path.exists():
                     try:
                         shutil.move(str(download_path), json_target)
                     except Exception:
                         json_target = str(download_path)
                     try:
+                        import json
+                        with open(json_target, "r", encoding="utf-8") as handle:
+                            payload = json.load(handle)
+                    except Exception as exc:
+                        result.setdefault("diagnostics", {})["naver_legacy_json_error"] = str(exc)
+                        payload = None
+                if payload is not None:
+                    try:
                         import io
                         import json
                         from urllib.request import Request, urlopen
 
-                        with open(json_target, "r", encoding="utf-8") as handle:
-                            payload = json.load(handle)
                         image_items = payload.get("images") or []
                         block_items = payload.get("blocks") or []
                         if not block_items:
@@ -3671,13 +4122,21 @@ class DetailScraper:
             SPACE_UP = SPACE_DN | (1 << 30) | (1 << 31)
             SCROLL_COUNT = 18
             naver_expected_scrolls = 0
+            estimated_step = 420   # CDP 없을 때 스크롤량 추정용 기본값
+            scroll_height = 0
+            viewport_height = 0
             if is_naver:
                 SCROLL_COUNT = 78
                 metrics = _scroll_metrics_via_cdp()
                 scroll_height = int(metrics.get("scrollHeight") or 0)
                 viewport_height = int(metrics.get("innerHeight") or 0)
-                if scroll_height and viewport_height:
+                if viewport_height:
+                    # CDP 있음: CDP scroll과 동일하게 0.68 배율
                     estimated_step = max(420, int(viewport_height * 0.68))
+                else:
+                    # CDP 없음: PageDown ≈ viewport * 0.88 (win_h - CHROME_UI로 추정)
+                    estimated_step = max(420, int((win_h - CHROME_UI) * 0.88))
+                if scroll_height and estimated_step:
                     naver_expected_scrolls = int((scroll_height + estimated_step - 1) // estimated_step) + 4
                     SCROLL_COUNT = max(32, min(86, naver_expected_scrolls))
             screenshots = []
@@ -3710,8 +4169,14 @@ class DetailScraper:
                             duplicate_tail_frames = 0
                     screenshots.append(content)
                     if is_naver:
-                        scroll_positions.append(int(frame_metrics.get("scrollY") or 0))
-                        scroll_page_heights.append(int(frame_metrics.get("scrollHeight") or 0))
+                        if frame_metrics:
+                            # CDP 성공: 정확한 절대 scrollY 사용
+                            scroll_positions.append(int(frame_metrics.get("scrollY") or 0))
+                            scroll_page_heights.append(int(frame_metrics.get("scrollHeight") or scroll_height))
+                        else:
+                            # CDP 없음: estimated_step 누적으로 추정
+                            scroll_positions.append(_si * estimated_step)
+                            scroll_page_heights.append(scroll_height)
                     full_img.close()
                 except Exception as e:
                     logger.warning(f"[{product_id}] 캡처 {_si} 실패: {e}")
@@ -3897,18 +4362,7 @@ class DetailScraper:
         product_url = _normalize_detail_url(product_url)
 
         platform_key = adaptive_learning.normalize_platform(platform, product_url)
-        method_order = adaptive_learning.get_detail_method_order(platform_key, product_url)
-        if platform_key == "naver":
-            method_order = ["chrome_screen"] + [method for method in method_order if method != "chrome_screen"]
-        if platform_key in {"coupang", "elevenst", "gmarket", "auction"}:
-            preferred = ["chrome_screen"]
-            if platform_key == "coupang":
-                preferred.append("ahk_screen")
-            method_order = preferred + [method for method in method_order if method not in preferred]
-        if platform_key in {"naver", "elevenst", "gmarket"}:
-            for fallback in ("chrome_screen", "playwright_user_profile", "drission"):
-                if fallback not in method_order:
-                    method_order.append(fallback)
+        method_order = get_detail_capture_method_order(platform_key, product_url)
         logger.warning(
             "[DetailRuntime] method_order product=%s platform=%s order=%s url=%s source=%s",
             product_id,

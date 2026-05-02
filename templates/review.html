@@ -784,6 +784,7 @@
         window.lastScrapedData = {{ last_scraped_data|tojson }};
         window.excelDownloadUrl = {{ last_download_url|tojson }};
         window.lastDetailSummary = {{ last_detail_summary|tojson }};
+        window.searchReport = {{ search_report|tojson }};
 
         function setCoupangManualStatus(message, isError = false) {
             const el = document.getElementById('coupangManualStatus');
@@ -863,6 +864,42 @@
             box.style.display = box.style.display === 'none' ? 'block' : 'none';
         }
 
+        let auctionImportPollTimer = null;
+
+        function auctionReportEntry(report) {
+            const platforms = (report && report.platforms) || {};
+            return platforms.Auction || platforms['옥션'] || platforms.auction || null;
+        }
+
+        function startAuctionImportPoll(previousRawCount = 0) {
+            clearInterval(auctionImportPollTimer);
+            let checks = 0;
+            auctionImportPollTimer = setInterval(async () => {
+                checks += 1;
+                try {
+                    const response = await fetch(`/api/search_report/${sessionId}?t=${Date.now()}`);
+                    if (!response.ok) return;
+                    const report = await response.json();
+                    const auction = auctionReportEntry(report);
+                    const rawCount = Number((auction && auction.raw_count) || 0);
+                    const status = String((auction && auction.status) || '');
+                    if (rawCount > previousRawCount && /성공|가져오기/.test(status)) {
+                        clearInterval(auctionImportPollTimer);
+                        setAuctionManualStatus(`옥션 ${rawCount}개를 가져왔습니다. 화면을 새로고침합니다.`);
+                        window.location.href = window.location.pathname + '?t=' + Date.now();
+                    } else if (checks % 6 === 0) {
+                        setAuctionManualStatus('옥션 전용 Chrome 대기 중입니다. 검색 결과 화면이 뜨면 자동으로 합칩니다.');
+                    }
+                    if (checks > 240) {
+                        clearInterval(auctionImportPollTimer);
+                        setAuctionManualStatus('옥션 전용 Chrome 대기가 오래 걸리고 있습니다. 결과 화면이 보이면 콘솔 코드 또는 HTML 붙여넣기를 사용하세요.', true);
+                    }
+                } catch (err) {
+                    // 다음 폴링에서 다시 확인합니다.
+                }
+            }, 3000);
+        }
+
         async function openAuctionProfile() {
             setAuctionManualStatus('옥션 전용 Chrome을 여는 중입니다...');
             const response = await fetch('/api/auction_profile/open', {
@@ -875,7 +912,10 @@
                 setAuctionManualStatus(data.error || '옥션 전용 Chrome 열기에 실패했습니다.', true);
                 return;
             }
-            setAuctionManualStatus('옥션 전용 Chrome을 열었습니다. 검색 결과가 보이면 자동으로 가져옵니다.');
+            const auction = auctionReportEntry(window.searchReport);
+            const previousRawCount = Number((auction && auction.raw_count) || 0);
+            setAuctionManualStatus('옥션 전용 Chrome을 열었습니다. 보안 확인 뒤 검색 결과가 보이면 자동으로 가져옵니다.');
+            startAuctionImportPoll(previousRawCount);
         }
 
         async function copyAuctionConsoleCode() {
@@ -913,6 +953,11 @@
                 return;
             }
             await importAuctionHtml({ session_id: sessionId, url, html });
+        }
+
+        const initialAuctionReport = auctionReportEntry(window.searchReport);
+        if (initialAuctionReport && /전용 Chrome 대기|사용자 검색 필요/.test(String(initialAuctionReport.status || ''))) {
+            startAuctionImportPoll(Number(initialAuctionReport.raw_count || 0));
         }
 
         let warningTimer = null;
