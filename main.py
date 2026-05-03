@@ -1233,9 +1233,11 @@ async def scrape_details():
             )
         except Exception as _runtime_exc:
             logging.warning("[detail-runtime] marker check failed for %s: %s", product.id, _runtime_exc)
-        cached = None if platform_key == "naver" else adaptive_learning.get_detail_cache(detail_url)
+        cached = None if platform_key in {"naver", "auction"} else adaptive_learning.get_detail_cache(detail_url)
         if platform_key == "naver":
             logging.info(f"[detail] bypass cache for naver product {product.id}")
+        elif platform_key == "auction":
+            logging.info(f"[detail] bypass cache for auction product {product.id}")
         if cached and is_detail_result_usable(cached):
             logging.info(f"[detail] cache hit for {product.id}")
             adaptive_learning.log_event(

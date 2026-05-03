@@ -46,13 +46,17 @@ DETAIL_EXPAND_JS = r"""
     "\uc0c1\uc138\uc815\ubcf4\ub354\ubcf4\uae30",
     "\uc0c1\ud488\uc815\ubcf4 \ub354\ubcf4\uae30",
     "\uc0c1\ud488\uc0c1\uc138 \ub354\ubcf4\uae30",
-    "\ud3bc\uce58\uae30"
+    "\ud3bc\uce58\uae30",
+    "\ud3bc\uccd0\ubcf4\uae30",
+    "\uc0c1\uc138\uc815\ubcf4 \ud3bc\uccd0\ubcf4\uae30",
+    "\uc0c1\uc138\uc815\ubcf4\ud3bc\uccd0\ubcf4\uae30"
   ];
   const clicked = [];
   const isSafeDetailButton = (el, text) => {
     const compact = (text || '').replace(/\s+/g, '');
     if (!compact) return false;
-    if (/[>›]/.test(text) || compact.includes('\ud648') || compact.includes('\uce74\ud14c\uace0\ub9ac')) return false;
+    const isExpandWord = keywords.some(kw => compact.toLowerCase().includes(String(kw).toLowerCase().replace(/\s+/g,'')));
+    if (!isExpandWord && (/[>›]/.test(text) || compact.includes('\ud648') || compact.includes('\uce74\ud14c\uace0\ub9ac'))) return false;
     if (compact.includes('\ubb38\uad6c') || compact.includes('\ud3ec\uc7a5\uc6a9\ud488') || compact.includes('\ud3ec\uc7a5\uc9c0')) return false;
     if (el.closest('header,nav,[class*="breadcrumb"],[class*="location"],[class*="category"],[class*="gnb"],[class*="lnb"]')) return false;
     const href = (el.getAttribute && (el.getAttribute('href') || '')) || '';
@@ -135,6 +139,38 @@ DETAIL_EXPAND_JS = r"""
     } catch (err) {}
   }
   return {clicked, total: clicked.length};
+})()
+"""
+
+NAVER_BTN_JS = r"""
+(() => {
+  try {
+    // 네이버 스마트스토어 "상세정보 펼쳐보기" 버튼 직접 탐색
+    // 우측 사이드바(선물하기/구매하기 등) 제외, 좌측 콘텐츠 영역만
+    const HALF_W = window.innerWidth * 0.54;
+    const allEls = Array.from(document.querySelectorAll('button,[role="button"],a,span,div,p'));
+    for (const el of allEls) {
+      const raw = (el.innerText || el.textContent || '').trim();
+      const t = raw.replace(/\s+/g, '');
+      if (t.length < 3 || t.length > 25) continue;
+      if (!/펼쳐보기|펼치기/.test(t)) continue;
+      // 리뷰/찜/구매 등 오탐 필터
+      if (/리뷰|찜|담기|구매|선물|장바구니|독독|문의|홈|카테고리/.test(t)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 20 || rect.height < 10) continue;
+      if (rect.left > HALF_W) continue;  // 우측 사이드바 제외
+      const absY = rect.top + (window.scrollY || 0);
+      if (absY < 250) continue;  // 헤더 영역 제외
+      const cs = window.getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      el.scrollIntoView({block: 'center', inline: 'nearest'});
+      el.click();
+      return {ok: true, text: t, x: Math.round(rect.left), y: Math.round(absY)};
+    }
+    return {ok: false};
+  } catch(e) {
+    return {ok: false, err: String(e)};
+  }
 })()
 """
 
@@ -672,6 +708,10 @@ def _normalize_detail_url(url: str) -> str:
 
 
 def get_detail_capture_method_order(platform_key: str, product_url: str) -> List[str]:
+    if platform_key == "auction":
+        # Auction must stay on the dedicated visible Chrome path. Falling back to
+        # Playwright/Drission can move unrelated browser windows and break the UX.
+        return ["chrome_screen"]
     method_order = adaptive_learning.get_detail_method_order(platform_key, product_url)
     if platform_key == "naver":
         method_order = ["chrome_screen"] + [method for method in method_order if method != "chrome_screen"]
@@ -1887,20 +1927,36 @@ class DetailScraper:
                     new_wins = [(hwnd, title) for hwnd, title in wins_now if hwnd not in before_hwnds]
                     if new_wins:
                         last_new_wins = new_wins
-                    candidate_wins = new_wins or wins_now
+                    candidate_wins = new_wins if is_auction else (new_wins or wins_now)
                     for hwnd, title in candidate_wins:
                         title_lower = title.lower()
                         if any(hint.lower() in title_lower for hint in title_hints):
                             hwnd_target = hwnd
                             break
-                    if not hwnd_target and new_wins:
+                    if not hwnd_target and new_wins and not is_auction:
                         hwnd_target = new_wins[-1][0]
                 if hwnd_target:
                     break
                 time.sleep(0.5)
 
             if not hwnd_target and last_new_wins:
-                hwnd_target = last_new_wins[-1][0]
+                if is_auction:
+                    auction_wins = [
+                        (hwnd, title)
+                        for hwnd, title in last_new_wins
+                        if any(hint.lower() in title.lower() for hint in title_hints)
+                    ]
+                    if len(auction_wins) == 1:
+                        hwnd_target = auction_wins[0][0]
+                    elif len(last_new_wins) == 1:
+                        hwnd_target = last_new_wins[0][0]
+                    else:
+                        logger.warning(
+                            "[Detail] Auction screen capture refused: ambiguous new windows %s",
+                            [title for _, title in last_new_wins],
+                        )
+                else:
+                    hwnd_target = last_new_wins[-1][0]
 
             if not hwnd_target:
                 if new_window_opened and not is_coupang:
@@ -2168,6 +2224,9 @@ class DetailScraper:
             naver_rebuilt_detail_page = False
 
             def _click_detail_more_button_by_color() -> bool:
+                if is_auction:
+                    logger.info("[Detail] skip generic color detail-more fallback for Auction")
+                    return False
                 try:
                     full_img = _print_window_capture(hwnd_target).convert("RGB")
                     arr = np.array(full_img)
@@ -2265,8 +2324,9 @@ class DetailScraper:
                     arr = np.asarray(full_img, dtype=np.uint8)
                     full_img.close()
                     h, w = arr.shape[:2]
-                    x0 = int(w * 0.14)
-                    x1 = int(w * 0.74)
+                    x0 = int(w * 0.10)
+                    # 우측 사이드바(선물하기/구매하기 등) 제외, 좌측 컨텐츠 영역만 스캔
+                    x1 = int(w * 0.52)
                     y0 = min(h - 1, CHROME_UI + 220)
                     y1 = max(y0 + 1, h - 80)
                     crop = arr[y0:y1, x0:x1]
@@ -2276,7 +2336,7 @@ class DetailScraper:
                     gray = crop.astype(np.int16).mean(axis=2)
                     dark = gray < 125
                     row_counts = dark.sum(axis=1)
-                    candidate_rows = np.where((row_counts > 130) & (row_counts < 650))[0]
+                    candidate_rows = np.where((row_counts > 130) & (row_counts < 1100))[0]
                     if candidate_rows.size == 0:
                         return False
 
@@ -2298,7 +2358,8 @@ class DetailScraper:
                         col_groups = np.split(cols, np.where(np.diff(cols) > 1)[0] + 1)
                         widest = max(col_groups, key=len)
                         width = int(widest[-1] - widest[0] + 1)
-                        if not (210 <= width <= 520):
+                        # "상세정보 펼쳐보기"는 좌측 콘텐츠 전체 폭(~630px+)이라 상한 950으로 확장
+                        if not (210 <= width <= 950):
                             continue
                         lines.append({
                             "y": int((group[0] + group[-1]) / 2),
@@ -2331,7 +2392,8 @@ class DetailScraper:
                                 continue
                             click_x = x0 + int((bx0 + bx1) / 2)
                             click_y = y0 + int((by0 + by1) / 2)
-                            center_score = 1.0 - min(1.0, abs((click_x / max(1, w)) - 0.42) / 0.30)
+                            # "상세정보 펼쳐보기" 버튼은 좌측 컨텐츠 영역 중앙(~31%)에 위치
+                            center_score = 1.0 - min(1.0, abs((click_x / max(1, w)) - 0.31) / 0.25)
                             score = (top_line["width"] + bottom_line["width"]) + center_score * 280 - abs(distance - 44) * 4
                             candidates.append((score, click_x, click_y, brightness, dark_density, distance))
 
@@ -2421,12 +2483,80 @@ class DetailScraper:
                 import io
                 return Image.open(io.BytesIO(base64.b64decode(data))).convert("RGB")
 
+            def _hide_auction_detail_more_residue_via_cdp(stage: str = "capture") -> Dict:
+                """Auction only: remove a leftover detail-more button after the detail body is already expanded."""
+                if not (debug_port and is_auction and screen_detail_expanded):
+                    return {}
+                script = r"""
+(() => {
+  const compact = (text) => String(text || '').replace(/\s+/g, '').trim();
+  const keywords = ['상세정보더보기', '상세정보 더보기', '상품상세더보기', '상품상세 더보기', '상품정보더보기', '상품정보 더보기'];
+  const badWords = ['필수표기정보', '쿠폰', '구매', '장바구니', '주문', '결제'];
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 80 || rect.height < 24 || rect.width > 620 || rect.height > 140) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0.05;
+  };
+  if (!document.getElementById('codex-auction-detail-more-hide-style')) {
+    const style = document.createElement('style');
+    style.id = 'codex-auction-detail-more-hide-style';
+    style.textContent = `
+      .codex-auction-detail-more-hidden {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.documentElement.appendChild(style);
+  }
+  const selectors = 'button,a,[role="button"],input[type="button"],input[type="submit"],div,span,p';
+  const hidden = [];
+  for (const el of Array.from(document.querySelectorAll(selectors)).slice(0, 7000)) {
+    const text = compact(el.innerText || el.textContent || el.getAttribute('aria-label') || el.value || '');
+    if (!text || text.length > 70) continue;
+    if (badWords.some((word) => text.includes(word))) continue;
+    if (!keywords.some((word) => text === compact(word) || text.includes(compact(word)))) continue;
+    if (!visible(el)) continue;
+    const rect = el.getBoundingClientRect();
+    const absoluteTop = Math.round(rect.top + window.scrollY);
+    if (absoluteTop < 260) continue;
+    const cs = getComputedStyle(el);
+    const redButton = (
+      (cs.backgroundColor || '').includes('239') ||
+      (cs.backgroundColor || '').includes('238') ||
+      /btn|button|more|detail/i.test(String(el.className || '') + ' ' + String(el.id || ''))
+    );
+    if (!redButton && rect.width < 140) continue;
+    el.classList.add('codex-auction-detail-more-hidden');
+    hidden.push({text, top: absoluteTop, width: Math.round(rect.width), height: Math.round(rect.height)});
+  }
+  return {hidden: hidden.length, items: hidden.slice(0, 8)};
+})()
+"""
+                try:
+                    message = _cdp_eval(script, timeout=8)
+                    value = (((message or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                    if not isinstance(value, dict):
+                        return {}
+                    hidden = int(value.get("hidden") or 0)
+                    if hidden:
+                        logger.info("[Detail] hid leftover Auction detail-more button(s) before capture: %s stage=%s", hidden, stage)
+                    return {
+                        f"auction_detail_more_hidden_{stage}": hidden,
+                        f"auction_detail_more_hidden_items_{stage}": value.get("items") or [],
+                    }
+                except Exception as exc:
+                    logger.debug("[Detail] auction detail-more residue hide skipped: %s", exc)
+                    return {f"auction_detail_more_hide_error_{stage}": str(exc)}
+
             def _prime_lazy_images_via_cdp() -> Dict:
-                lazy_hard_limit = 70000 if is_naver else 180000
-                lazy_max_passes = 3 if is_naver else 12
+                lazy_hard_limit = 240000 if is_naver else 260000
+                lazy_max_passes = 5 if is_naver else 14
                 lazy_stable_rounds = 1 if is_naver else 3
                 lazy_delay_ms = 80 if is_naver else 180
-                lazy_timeout = 35 if is_naver else 130
+                lazy_timeout = 75 if is_naver else 170
                 lazy_script = r"""
 (() => new Promise(async (resolve) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2507,7 +2637,7 @@ class DetailScraper:
                     passes = 0
                     total_scrolls = 0
                     hard_limit = lazy_hard_limit
-                    while passes < (3 if is_naver else 12) and stable_rounds < lazy_stable_rounds:
+                    while passes < (5 if is_naver else 14) and stable_rounds < lazy_stable_rounds:
                         current_limit = min(max(_read_scroll_height(), viewport_height), hard_limit)
                         for y in range(0, current_limit + step, step):
                             _cdp_eval(f"window.scrollTo(0,{int(y)}); true", timeout=3)
@@ -2613,12 +2743,298 @@ class DetailScraper:
                         except Exception:
                             pass
 
+            def _capture_auction_detail_scroller_via_cdp() -> bool:
+                if not (debug_port and is_auction):
+                    return False
+                try:
+                    _cdp_call("Page.enable", {}, timeout=5)
+                    init_msg = _cdp_eval(r"""
+(() => {
+  const compact = (text) => String(text || '').replace(/\s+/g, '').trim();
+  const moreWords = ['상세정보더보기', '상세정보 더보기', '상품상세더보기', '상품상세 더보기', '상품정보더보기', '상품정보 더보기']
+    .map(compact);
+  for (const el of Array.from(document.querySelectorAll('button,a,[role="button"],input[type="button"],div,span')).slice(0, 8000)) {
+    const text = compact(el.innerText || el.textContent || el.getAttribute('aria-label') || el.value || '');
+    if (!text || text.length > 70) continue;
+    if (moreWords.some((word) => text === word || text.includes(word))) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width >= 80 && rect.height >= 24) {
+        el.style.setProperty('display', 'none', 'important');
+        el.style.setProperty('visibility', 'hidden', 'important');
+        el.style.setProperty('pointer-events', 'none', 'important');
+      }
+    }
+  }
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return rect.width > 240 && rect.height > 120 && cs.display !== 'none' && cs.visibility !== 'hidden';
+  };
+  const scoreTarget = (el, explicit) => {
+    const rect = el.getBoundingClientRect();
+    const scrollHeight = Math.round(el.scrollHeight || 0);
+    const clientHeight = Math.round(el.clientHeight || rect.height || 0);
+    const overflow = Math.max(0, scrollHeight - clientHeight);
+    return {
+      el,
+      rect,
+      explicit,
+      scrollHeight,
+      clientHeight,
+      width: Math.round(rect.width || 0),
+      height: Math.round(rect.height || 0),
+      score: overflow + scrollHeight + (explicit ? 25000 : 0) + Math.max(0, rect.height || 0)
+    };
+  };
+  const explicitCandidates = Array.from(document.querySelectorAll(
+    '#item_detail_view_js, .box__detail-view, ' +
+    '[id*="detail_view"], [class*="detail-view"], ' +
+    '[id*="itemDetail"], [class*="itemDetail"], ' +
+    '[id*="item_detail"], [class*="item_detail"], ' +
+    '[id*="item-detail"], [class*="item-detail"], ' +
+    '[id*="productDetail"], [class*="productDetail"], ' +
+    '[id*="product_detail"], [class*="product_detail"]'
+  ))
+    .filter(visible)
+    .map((el) => scoreTarget(el, true));
+  const seen = new Set(explicitCandidates.map((item) => item.el));
+  const scrollCandidates = Array.from(document.querySelectorAll('main,section,article,div')).slice(0, 12000)
+    .filter((el) => !seen.has(el) && visible(el) && (el.scrollHeight - el.clientHeight) > 240)
+    .map((el) => scoreTarget(el, false));
+  const candidates = explicitCandidates.concat(scrollCandidates)
+    .filter((item) => item.scrollHeight > 800 && item.width > 240)
+    .sort((a, b) => b.score - a.score);
+  const target = candidates[0] && candidates[0].el;
+  if (!target) return {ok: false, reason: 'detail_target_not_found', candidates: candidates.length};
+  target.setAttribute('data-jepum-auction-capture-target', '1');
+  target.scrollTop = 0;
+  target.scrollIntoView({block: 'start', inline: 'nearest'});
+  const rect = target.getBoundingClientRect();
+  const pageX = Math.max(0, Math.round((window.scrollX || 0) + rect.left));
+  const pageY = Math.max(0, Math.round((window.scrollY || 0) + rect.top));
+  const width = Math.max(320, Math.min(2200, Math.round(rect.width || target.clientWidth || window.innerWidth || 1200)));
+  const clientHeight = Math.max(320, Math.round(target.clientHeight || rect.height || window.innerHeight || 900));
+  const scrollHeight = Math.max(clientHeight, Math.round(target.scrollHeight || clientHeight));
+  const viewportH = Math.max(320, Math.round(window.innerHeight || 900));
+  const innerScrollable = (Math.round(target.scrollHeight || 0) - Math.round(target.clientHeight || 0)) > 240;
+  return {ok: true, pageX, pageY, width, clientHeight, scrollHeight, viewportH, innerScrollable, candidates: candidates.length};
+})()
+""", timeout=10)
+                    init = (((init_msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                    if not isinstance(init, dict) or not init.get("ok"):
+                        logger.info("[Detail] Auction CDP scroller capture skipped: %s", init)
+                        return False
+
+                    page_x = int(init.get("pageX") or 0)
+                    page_y = int(init.get("pageY") or 0)
+                    width = int(init.get("width") or 0)
+                    viewport_h = int(init.get("clientHeight") or 0)
+                    scroll_h = int(init.get("scrollHeight") or 0)
+                    window_viewport_h = int(init.get("viewportH") or viewport_h or 900)
+                    inner_scrollable = bool(init.get("innerScrollable"))
+                    if width < 320 or scroll_h < 500:
+                        return False
+                    if inner_scrollable and viewport_h < 320:
+                        return False
+
+                    pieces: List[Image.Image] = []
+                    fullpage_path = os.path.join(output_dir, f"{product_id}_fullpage.jpg")
+                    if inner_scrollable:
+                        _raw_step = max(320, viewport_h)
+                        max_top = max(0, scroll_h - viewport_h)
+                        if max_top == 0 or _raw_step >= scroll_h:
+                            # clientHeight ≈ scrollHeight → 실제로 스크롤 안 됨
+                            # 한 번에 전체를 캡처하면 26000px+ 대형 스크린샷 → 잘림 위험
+                            # window-scroll 모드로 전환해서 타일링
+                            inner_scrollable = False
+                            step = max(320, window_viewport_h)
+                            max_top = 0
+                            logger.info(
+                                "[Detail] Auction CDP scroller: max_top=0 → window-scroll mode el_h=%s win_viewport=%s step=%s pageY=%s",
+                                scroll_h, window_viewport_h, step, page_y,
+                            )
+                        else:
+                            step = _raw_step
+                            logger.info(
+                                "[Detail] Auction CDP scroller: inner-scroll mode el_h=%s viewport_h=%s step=%s",
+                                scroll_h, viewport_h, step,
+                            )
+                    else:
+                        # Non-scrollable element: tile using window viewport height
+                        step = max(320, window_viewport_h)
+                        max_top = 0  # unused for non-scrollable
+                        logger.info(
+                            "[Detail] Auction CDP scroller: window-scroll mode el_h=%s win_viewport=%s step=%s pageY=%s",
+                            scroll_h, window_viewport_h, step, page_y,
+                        )
+                    last_end = 0
+                    y = 0
+                    tile_index = 0
+                    while last_end < scroll_h and tile_index < 120:
+                        if inner_scrollable:
+                            actual_y = min(y, max_top)
+                            if tile_index and pieces and actual_y <= 0 and last_end > 0:
+                                break
+                            set_msg = _cdp_eval(
+                                f"""
+(() => {{
+  const visible = (el) => {{
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return rect.width > 240 && rect.height > 120 && cs.display !== 'none' && cs.visibility !== 'hidden';
+  }};
+  const explicit = Array.from(document.querySelectorAll(
+    '[data-jepum-auction-capture-target="1"], #item_detail_view_js, .box__detail-view, ' +
+    '[id*="detail_view"], [class*="detail-view"], ' +
+    '[id*="itemDetail"], [class*="itemDetail"], [id*="item_detail"], [class*="item_detail"], ' +
+    '[id*="item-detail"], [class*="item-detail"], ' +
+    '[id*="productDetail"], [class*="productDetail"], [id*="product_detail"], [class*="product_detail"]'
+  ))
+    .filter((el) => visible(el) && (el.scrollHeight || 0) > 800);
+  const seen = new Set(explicit);
+  const fallback = Array.from(document.querySelectorAll('main,section,article,div')).slice(0, 12000)
+    .filter((el) => !seen.has(el) && visible(el) && ((el.scrollHeight || 0) - (el.clientHeight || 0)) > 240);
+  const candidates = explicit.concat(fallback)
+    .map((el) => {{
+      const rect = el.getBoundingClientRect();
+      const scrollHeight = Math.round(el.scrollHeight || 0);
+      const clientHeight = Math.round(el.clientHeight || rect.height || 0);
+      const explicitScore = el.hasAttribute('data-jepum-auction-capture-target') ? 50000 : 0;
+      return {{el, score: explicitScore + scrollHeight + Math.max(0, scrollHeight - clientHeight) + Math.max(0, rect.height || 0)}};
+    }})
+    .sort((a, b) => b.score - a.score);
+  const target = candidates[0] && candidates[0].el;
+  if (!target) return {{ok: false}};
+  target.scrollTop = {int(actual_y)};
+  target.scrollIntoView({{block: 'start', inline: 'nearest'}});
+  const rect = target.getBoundingClientRect();
+  return {{
+    ok: true,
+    scrollTop: Math.round(target.scrollTop || 0),
+    pageX: Math.max(0, Math.round((window.scrollX || 0) + rect.left)),
+    pageY: Math.max(0, Math.round((window.scrollY || 0) + rect.top)),
+    width: Math.max(320, Math.min(2200, Math.round(rect.width || target.clientWidth || window.innerWidth || 1200))),
+    clientHeight: Math.max(320, Math.round(target.clientHeight || rect.height || window.innerHeight || 900))
+  }};
+}})()
+""",
+                                timeout=8,
+                            )
+                            set_value = (((set_msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                            if isinstance(set_value, dict) and set_value.get("ok"):
+                                page_x = int(set_value.get("pageX") or page_x)
+                                page_y = int(set_value.get("pageY") or page_y)
+                                width = int(set_value.get("width") or width)
+                                viewport_h = int(set_value.get("clientHeight") or viewport_h)
+                            time.sleep(0.28)
+                            capture_h = max(320, min(viewport_h, scroll_h - actual_y))
+                            clip_y = page_y
+                        else:
+                            # Non-scrollable element: use absolute page-Y coordinates per tile
+                            actual_y = y
+                            if actual_y >= scroll_h:
+                                break
+                            # Scroll window to bring this slice into viewport (triggers lazy loading)
+                            prime_y = max(0, page_y + actual_y - 80)
+                            _cdp_eval(f"window.scrollTo(0, {prime_y}); true;", timeout=4)
+                            time.sleep(0.35)
+                            capture_h = max(320, min(step, scroll_h - actual_y))
+                            clip_y = page_y + actual_y
+                        shot = _cdp_call(
+                            "Page.captureScreenshot",
+                            {
+                                "format": "jpeg",
+                                "quality": 88,
+                                "fromSurface": True,
+                                "captureBeyondViewport": True,
+                                "clip": {
+                                    "x": page_x,
+                                    "y": clip_y,
+                                    "width": width,
+                                    "height": capture_h,
+                                    "scale": 1,
+                                },
+                            },
+                            timeout=20,
+                        )
+                        data = (((shot or {}).get("result") or {}).get("data") or "")
+                        if not data:
+                            break
+                        image = _decode_cdp_image(data)
+                        if inner_scrollable:
+                            overlap_top = max(0, last_end - actual_y)
+                            usable_h = min(image.height - overlap_top, scroll_h - last_end)
+                        else:
+                            overlap_top = 0
+                            usable_h = min(image.height, scroll_h - last_end)
+                        if usable_h <= 24:
+                            image.close()
+                            break
+                        if overlap_top:
+                            piece = image.crop((0, overlap_top, image.width, overlap_top + usable_h))
+                            image.close()
+                        elif usable_h < image.height:
+                            piece = image.crop((0, 0, image.width, usable_h))
+                            image.close()
+                        else:
+                            piece = image
+                        pieces.append(piece)
+                        last_end += usable_h
+                        tile_index += 1
+                        y += step
+
+                    if len(pieces) < 1:
+                        for piece in pieces:
+                            piece.close()
+                        return False
+                    saved_paths, capture_stats = _save_cdp_pieces(fullpage_path, pieces, 88, "auction_detail_scroller")
+                    if not saved_paths:
+                        return False
+                    fullpage_path = saved_paths[0]
+                    postprocess_info = {}
+                    if os.path.exists(fullpage_path):
+                        postprocess_info.update(_trim_auction_repeated_header(fullpage_path))
+                    quality = _set_result_quality(
+                        result,
+                        fullpage_path,
+                        {
+                            "capture_version": DETAIL_CAPTURE_VERSION,
+                            "capture_mode": "auction_detail_scroller_cdp",
+                            "auction_detail_scroller": True,
+                            "auction_detail_scroll_height": scroll_h,
+                            "auction_detail_tiles": tile_index,
+                            **capture_stats,
+                            **postprocess_info,
+                        },
+                    )
+                    if not quality.get("ok"):
+                        result["screenshots"] = []
+                        result["status"] = quality.get("reason", "quality_failed")
+                        return False
+                    result["screenshots"] = saved_paths
+                    result["method"] = method_name
+                    result["status"] = "success"
+                    logger.info("[Detail] Auction CDP scroller capture complete: tiles=%s height=%s", tile_index, scroll_h)
+                    return True
+                except Exception as exc:
+                    logger.debug("[Detail] Auction CDP scroller capture failed: %s", exc)
+                    return False
+
             def _capture_fullpage_via_cdp() -> bool:
                 if not debug_port:
                     return False
                 try:
                     _cdp_call("Page.enable", {}, timeout=5)
+                    # 옥션도 fullpage CDP 캡처 허용 (상단~하단 전체 페이지)
+                    # screen_detail_expanded 체크 제거 — "더보기"는 이미 _preexpand_screen_detail() 에서 처리됨
+                    auction_hide_info = {}
+                    if is_auction:
+                        auction_hide_info.update(_hide_auction_detail_more_residue_via_cdp("before_lazy"))
                     lazy_stats = _prime_lazy_images_via_cdp()
+                    if is_auction:
+                        auction_hide_info.update(_hide_auction_detail_more_residue_via_cdp("after_lazy"))
                     metrics = _cdp_call("Page.getLayoutMetrics", {}, timeout=5) or {}
                     result_obj = metrics.get("result") or {}
                     content_size = result_obj.get("cssContentSize") or result_obj.get("contentSize") or {}
@@ -2631,7 +3047,7 @@ class DetailScraper:
                         int(layout_viewport.get("pageY", 0) or 0) + int(layout_viewport.get("clientHeight") or 0),
                     )
                     width = max(320, min(content_width, viewport_width, 2200))
-                    height_limit = 70000 if is_naver else 180000
+                    height_limit = 240000 if is_naver else 260000
                     capture_y = 0
                     capture_region_info = {"cdp_detail_start_strategy": "full_document"}
                     height = max(320, min(content_height, height_limit))
@@ -2738,6 +3154,7 @@ class DetailScraper:
                             **capture_region_info,
                             **capture_stats,
                             **postprocess_info,
+                            **auction_hide_info,
                         },
                     )
                     if not quality.get("ok"):
@@ -2772,7 +3189,7 @@ class DetailScraper:
                     x = max(0, int(x))
                     y = max(0, int(y))
                     width = max(320, min(int(width), 2200))
-                    height_limit = 70000 if is_naver else 180000
+                    height_limit = 240000 if is_naver else 260000
                     height = max(320, min(int(height), height_limit))
                     max_single_height = 28000
                     if height <= max_single_height:
@@ -2998,6 +3415,27 @@ class DetailScraper:
                     logger.debug(f"[{product_id}] Naver detail-region CDP capture skipped: {exc}")
                     return False
 
+
+            def _expand_naver_detail_button_via_cdp() -> bool:
+                """Naver "상세정보 펼쳐보기" 버튼 전용 CDP 클릭 — 우측 사이드바 제외"""
+                if not debug_port:
+                    return False
+                try:
+                    for scroll_y in (0, 500, 1000, 1800, 2700, 4000):
+                        _cdp_eval(f"window.scrollTo(0, {scroll_y}); true;")
+                        import time as _t; _t.sleep(0.3)
+                        msg = _cdp_eval(NAVER_BTN_JS)
+                        val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                        if isinstance(val, dict) and val.get("ok"):
+                            logger.info("[Detail] Naver 펼쳐보기 btn clicked via CDP: %s", val)
+                            _cdp_eval("window.scrollTo(0, 0); true;")
+                            import time as _t2; _t2.sleep(0.5)
+                            return True
+                    return False
+                except Exception as exc:
+                    logger.debug(f"[{product_id}] _expand_naver_detail_button_via_cdp skipped: {exc}")
+                    return False
+
             def _expand_detail_more_via_cdp() -> bool:
                 if not debug_port:
                     return False
@@ -3033,16 +3471,146 @@ class DetailScraper:
                 if not debug_port:
                     return False
                 try:
+                    if is_auction:
+                        message = _cdp_eval(
+                            f"""
+(() => {{
+  const step = Math.max(620, Math.floor((window.innerHeight || {max(1, win_h - CHROME_UI)}) * 0.78));
+  const visible = (el) => {{
+    if (!el) return false;
+    if (el === document.documentElement || el === document.body || el === document.scrollingElement) return true;
+    const rect = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return rect.width > 120 && rect.height > 120 && cs.display !== 'none' && cs.visibility !== 'hidden';
+  }};
+  const uniq = [];
+  const seen = new Set();
+  const add = (el) => {{
+    if (!el || seen.has(el)) return;
+    seen.add(el);
+    uniq.push(el);
+  }};
+  add(document.scrollingElement);
+  add(document.documentElement);
+  add(document.body);
+  for (const el of Array.from(document.querySelectorAll('main,section,article,div,iframe')).slice(0, 9000)) add(el);
+  const candidates = uniq
+    .filter((el) => visible(el) && (el.scrollHeight - el.clientHeight) > 80)
+    .map((el) => {{
+      const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : {{top: 0, left: 0, width: window.innerWidth, height: window.innerHeight}};
+      const isDoc = el === document.scrollingElement || el === document.documentElement || el === document.body;
+      const scrollTop = isDoc ? Math.round(window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0) : Math.round(el.scrollTop || 0);
+      const clientHeight = isDoc ? Math.round(window.innerHeight || el.clientHeight || 0) : Math.round(el.clientHeight || 0);
+      const scrollHeight = Math.round(el.scrollHeight || 0);
+      return {{
+        el,
+        isDoc,
+        scrollTop,
+        clientHeight,
+        scrollHeight,
+        maxTop: Math.max(0, scrollHeight - clientHeight),
+        score: Math.max(0, scrollHeight - clientHeight) + (isDoc ? 1000 : 0) + Math.max(0, rect.height)
+      }};
+    }})
+    .filter((item) => item.maxTop > item.scrollTop + 8)
+    .sort((a, b) => b.score - a.score);
+  const target = candidates[0];
+  if (!target) {{
+    const scrollHeight = Math.round(Math.max(document.body ? document.body.scrollHeight : 0, document.documentElement ? document.documentElement.scrollHeight : 0));
+    const innerHeight = Math.round(window.innerHeight || 0);
+    return {{moved: false, atBottom: true, before: Math.round(window.scrollY || 0), after: Math.round(window.scrollY || 0), scrollHeight, innerHeight, target: 'none'}};
+  }}
+  const before = target.scrollTop;
+  const next = Math.min(target.maxTop, before + step);
+  if (target.isDoc) {{
+    window.scrollTo(0, next);
+    document.documentElement.scrollTop = next;
+    document.body.scrollTop = next;
+  }} else {{
+    target.el.scrollTop = next;
+  }}
+  const after = target.isDoc
+    ? Math.round(window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0)
+    : Math.round(target.el.scrollTop || 0);
+  return {{
+    moved: Math.abs(after - before) > 2,
+    atBottom: after >= target.maxTop - 8,
+    before,
+    after,
+    step,
+    scrollHeight: target.scrollHeight,
+    innerHeight: target.clientHeight,
+    maxTop: target.maxTop,
+    target: target.isDoc ? 'document' : ((target.el.tagName || 'EL') + '#' + (target.el.id || '') + '.' + String(target.el.className || '').slice(0, 50))
+  }};
+}})()
+"""
+                        )
+                        value = (((message or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                        if not isinstance(value, dict):
+                            return False
+                        before_y = int(value.get("before") or 0)
+                        after_y = int(value.get("after") or before_y)
+                        scroll_h = int(value.get("scrollHeight") or 0)
+                        moved = bool(value.get("moved"))
+                        at_bottom = bool(value.get("atBottom"))
+                        if not moved and not at_bottom:
+                            logger.info(
+                                "[Detail] Auction DOM scroll did not move; falling back to physical scroll target=%s y=%s height=%s",
+                                value.get("target"),
+                                before_y,
+                                scroll_h,
+                            )
+                            return False
+                        if moved:
+                            logger.info(
+                                "[Detail] Auction DOM scroll moved target=%s y=%s->%s height=%s",
+                                value.get("target"),
+                                before_y,
+                                after_y,
+                                scroll_h,
+                            )
+                        return True
                     min_step = 420 if is_naver else 520
                     step_ratio = 0.68 if is_naver else 0.82
                     message = _cdp_eval(
                         f"(() => {{"
-                        f"const step = Math.max({min_step}, Math.floor(window.innerHeight * {step_ratio}));"
+                        f"const beforeY = Math.round(window.scrollY || 0);"
+                        f"const doc = document.documentElement;"
+                        f"const body = document.body;"
+                        f"const innerHeight = Math.round(window.innerHeight || 0);"
+                        f"const scrollHeight = Math.round(Math.max("
+                        f"body ? body.scrollHeight : 0,"
+                        f"doc ? doc.scrollHeight : 0"
+                        f"));"
+                        f"const maxY = Math.max(0, scrollHeight - innerHeight);"
+                        f"const step = Math.max({min_step}, Math.floor(innerHeight * {step_ratio}));"
                         f"window.scrollBy(0, step);"
-                        f"return {{scrollY: Math.round(window.scrollY), scrollHeight: Math.round(document.body.scrollHeight), step}};"
+                        f"const afterY = Math.round(window.scrollY || 0);"
+                        f"return {{"
+                        f"beforeY,"
+                        f"scrollY: afterY,"
+                        f"innerHeight,"
+                        f"scrollHeight,"
+                        f"maxY,"
+                        f"step,"
+                        f"moved: Math.abs(afterY - beforeY) > 2,"
+                        f"atBottom: afterY >= maxY - 8"
+                        f"}};"
                         f"}})()"
                     )
                     value = (((message or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                    if is_auction and isinstance(value, dict):
+                        moved = bool(value.get("moved"))
+                        at_bottom = bool(value.get("atBottom"))
+                        if not moved and not at_bottom:
+                            logger.info(
+                                "[Detail] Auction CDP scroll did not move; falling back to physical scroll y=%s height=%s",
+                                value.get("scrollY"),
+                                value.get("scrollHeight"),
+                            )
+                            return False
+                        return True
                     return isinstance(value, dict) and int(value.get("step") or 0) > 0
                 except Exception as exc:
                     logger.debug(f"[{product_id}] CDP scroll skipped: {exc}")
@@ -3172,7 +3740,7 @@ class DetailScraper:
 
                     if is_naver:
                         _dismiss_naver_popup()
-                        if _expand_detail_more_via_cdp():
+                        if _expand_naver_detail_button_via_cdp() or _expand_detail_more_via_cdp():
                             screen_detail_expanded = True
                             _pag.hotkey("ctrl", "home")
                             if render_hwnd:
@@ -3184,10 +3752,41 @@ class DetailScraper:
                                     pass
                             time.sleep(0.5)
                             return
+                        def _naver_dismiss_js_dialog() -> bool:
+                            """JS alert 다이얼로그 자동 dismiss. 다이얼로그가 있으면 True 반환."""
+                            if not debug_port:
+                                return False
+                            try:
+                                resp = _cdp_call("Page.handleJavaScriptDialog", {"accept": True}, timeout=2)
+                                if resp and "error" not in resp:
+                                    logger.info("[Detail] Naver JS dialog auto-dismissed (확인 클릭)")
+                                    time.sleep(0.25)
+                                    return True
+                            except Exception:
+                                pass
+                            return False
+
                         for _ in range(18):
                             if _click_naver_detail_more_button_by_outline():
+                                # 클릭 후 JS 다이얼로그 확인 — "옵션 선택" 등 잘못된 버튼이면 dismiss 후 재시도
+                                if _naver_dismiss_js_dialog():
+                                    # 잘못된 버튼 클릭 → 다이얼로그 dismiss 후 계속 탐색
+                                    logger.info("[Detail] Naver wrong button dismissed, continue searching expand btn")
+                                    if render_hwnd:
+                                        try:
+                                            win32api.SendMessage(render_hwnd, win32con.WM_KEYDOWN, VK_NEXT, NEXT_DN)
+                                            time.sleep(0.04)
+                                            win32api.SendMessage(render_hwnd, win32con.WM_KEYUP, VK_NEXT, NEXT_UP)
+                                        except Exception:
+                                            _pag.press("pagedown")
+                                    else:
+                                        _pag.press("pagedown")
+                                    time.sleep(0.55)
+                                    continue
                                 screen_detail_expanded = True
                                 break
+                            # 매 스크롤마다도 혹시 떠있는 다이얼로그 정리
+                            _naver_dismiss_js_dialog()
                             if render_hwnd:
                                 try:
                                     win32api.SendMessage(render_hwnd, win32con.WM_KEYDOWN, VK_NEXT, NEXT_DN)
@@ -3210,6 +3809,76 @@ class DetailScraper:
                                 pass
                         time.sleep(0.7)
                         return
+
+                    def _auction_remaining_detail_more_count_via_cdp() -> int:
+                        if not (debug_port and is_auction):
+                            return 0
+                        script = r"""
+(() => {
+  const keywords = ['상세정보더보기', '상세정보 더보기', '상품상세더보기', '상품상세 더보기', '상품정보더보기', '상품정보 더보기']
+    .map((text) => String(text || '').replace(/\s+/g, '').trim());
+  const compact = (text) => String(text || '').replace(/\s+/g, '').trim();
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 80 || rect.height < 24 || rect.width > 620 || rect.height > 140) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0.05;
+  };
+  let count = 0;
+  const selectors = 'button,a,[role="button"],input[type="button"],input[type="submit"]';
+  for (const el of Array.from(document.querySelectorAll(selectors)).slice(0, 3000)) {
+    const text = compact(el.innerText || el.textContent || el.getAttribute('aria-label') || el.value || '');
+    if (!keywords.includes(text) || !visible(el)) continue;
+    const top = Math.round(el.getBoundingClientRect().top + window.scrollY);
+    if (top >= 260) count++;
+  }
+  return count;
+})()
+"""
+                        try:
+                            msg = _cdp_eval(script, timeout=6)
+                            raw = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or 0
+                            return int(raw or 0)
+                        except Exception:
+                            return 0
+
+                    def _dispatch_mouse_click_via_cdp(x: int, y: int) -> bool:
+                        if not debug_port:
+                            return False
+                        try:
+                            x = int(x)
+                            y = int(y)
+                            if x <= 0 or y <= 0:
+                                return False
+                            _cdp_call("Page.bringToFront", {}, timeout=3)
+                            _cdp_call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, timeout=3)
+                            _cdp_call(
+                                "Input.dispatchMouseEvent",
+                                {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1},
+                                timeout=3,
+                            )
+                            time.sleep(0.05)
+                            _cdp_call(
+                                "Input.dispatchMouseEvent",
+                                {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1},
+                                timeout=3,
+                            )
+                            return True
+                        except Exception as exc:
+                            logger.debug("[Detail] CDP mouse click skipped: %s", exc)
+                            return False
+
+                    def _dismiss_js_dialog_via_cdp(reason: str = "") -> bool:
+                        if not debug_port:
+                            return False
+                        try:
+                            _cdp_call("Page.handleJavaScriptDialog", {"accept": True}, timeout=2)
+                            logger.info("[Detail] accepted JS dialog via CDP%s", f" ({reason})" if reason else "")
+                            time.sleep(0.25)
+                            return True
+                        except Exception:
+                            return False
 
                     def _expand_coupang_auction_detail_more_via_cdp() -> bool:
                         """Coupang/Auction: click only the real detail-more button, not generic accordions."""
@@ -3271,6 +3940,15 @@ class DetailScraper:
   if (!best) return {clicked: false, reason: 'not_found'};
   try {
     best.el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+    const rect = best.el.getBoundingClientRect();
+    const frameEl = best.win && best.win.frameElement;
+    const frameRect = frameEl ? frameEl.getBoundingClientRect() : {top: 0, left: 0};
+    const x = Math.round(frameRect.left + rect.left + rect.width / 2);
+    const y = Math.round(frameRect.top + rect.top + rect.height / 2);
+    if (String(location.hostname || '').toLowerCase().includes('auction')) {
+      try { best.el.click(); } catch (_) {}
+      return {clicked: true, needsMouse: true, x, y, text: best.text, top: Math.round(best.top)};
+    }
     best.el.click();
     return {clicked: true, text: best.text, top: Math.round(best.top)};
   } catch (err) {
@@ -3283,16 +3961,45 @@ class DetailScraper:
                             for scroll_y in (0, 900, 1800, 3000, 4500, 6500):
                                 _cdp_eval(f"window.scrollTo(0,{int(scroll_y)}); true;", timeout=4)
                                 time.sleep(0.35)
+                                before_height = int((_scroll_metrics_via_cdp() or {}).get("scrollHeight") or 0)
                                 msg = _cdp_eval(script.replace("__KEYWORDS__", json.dumps(keywords, ensure_ascii=False)), timeout=8)
                                 val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
                                 if isinstance(val, dict) and val.get("clicked"):
+                                    if is_auction:
+                                        if val.get("needsMouse"):
+                                            _dispatch_mouse_click_via_cdp(int(val.get("x") or 0), int(val.get("y") or 0))
+                                            _dismiss_js_dialog_via_cdp("auction detail-more mouse click")
+                                        time.sleep(2.6)
+                                        after_height = int((_scroll_metrics_via_cdp() or {}).get("scrollHeight") or 0)
+                                        remaining = _auction_remaining_detail_more_count_via_cdp()
+                                        if after_height > before_height + 300 or remaining == 0:
+                                            logger.info(
+                                                "[Detail] auction detail-more click verified: %s at y=%s height=%s->%s remaining=%s mouse=%s",
+                                                val.get("text"),
+                                                val.get("top"),
+                                                before_height,
+                                                after_height,
+                                                remaining,
+                                                bool(val.get("needsMouse")),
+                                            )
+                                            return True
+                                        logger.info(
+                                            "[Detail] auction detail-more click not verified yet: %s at y=%s height=%s->%s remaining=%s mouse=%s",
+                                            val.get("text"),
+                                            val.get("top"),
+                                            before_height,
+                                            after_height,
+                                            remaining,
+                                            bool(val.get("needsMouse")),
+                                        )
+                                        continue
+                                    time.sleep(2.0)
                                     logger.info(
                                         "[Detail] %s exact detail-more clicked via CDP: %s at y=%s",
                                         "coupang" if is_coupang else "auction",
                                         val.get("text"),
                                         val.get("top"),
                                     )
-                                    time.sleep(1.8)
                                     return True
                             return False
                         except Exception as exc:
@@ -3323,6 +4030,7 @@ class DetailScraper:
                             for scroll_y in (0, 1500, 3000, 5000):
                                 _cdp_eval(f"window.scrollTo(0,{scroll_y}); true;")
                                 time.sleep(0.8)
+                                before_height = int((_scroll_metrics_via_cdp() or {}).get("scrollHeight") or 0)
                                 msg = _cdp_eval(_AUCTION_FIND_JS)
                                 val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
                                 if isinstance(val, dict) and val.get("found"):
@@ -3331,8 +4039,24 @@ class DetailScraper:
                                     wl, wt, _, _ = win32gui.GetWindowRect(hwnd_target)
                                     _win_click(wl + vx, wt + CHROME_UI + vy)
                                     logger.info("[Detail] auction detail-more clicked via CDP pos (%s,%s)", wl + vx, wt + CHROME_UI + vy)
-                                    time.sleep(1.8)
-                                    return True
+                                    _dismiss_js_dialog_via_cdp("auction fallback click")
+                                    time.sleep(2.4)
+                                    after_height = int((_scroll_metrics_via_cdp() or {}).get("scrollHeight") or 0)
+                                    remaining = _auction_remaining_detail_more_count_via_cdp()
+                                    if after_height > before_height + 300 or remaining == 0:
+                                        logger.info(
+                                            "[Detail] auction fallback detail-more verified: height=%s->%s remaining=%s",
+                                            before_height,
+                                            after_height,
+                                            remaining,
+                                        )
+                                        return True
+                                    logger.info(
+                                        "[Detail] auction fallback detail-more not verified: height=%s->%s remaining=%s",
+                                        before_height,
+                                        after_height,
+                                        remaining,
+                                    )
                         except Exception as exc:
                             logger.debug("[Detail] auction expand skipped: %s", exc)
                         return False
@@ -3355,10 +4079,11 @@ class DetailScraper:
     '\uc7a5\ubc14\uad6c\ub2c8'
   ];
   const compact = (text) => String(text || '').replace(/\s+/g, '').trim();
+  const normalizedKeywords = keywords.map((word) => compact(word));
   const visible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
-    if (rect.width < 40 || rect.height < 18) return false;
+    if (rect.width < 80 || rect.height < 24 || rect.width > 620 || rect.height > 140) return false;
     const cs = getComputedStyle(el);
     return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0.05;
   };
@@ -3368,7 +4093,7 @@ class DetailScraper:
     const text = compact(el.innerText || el.textContent || el.getAttribute('aria-label') || el.value || '');
     if (!text || text.length > 90) continue;
     if (badWords.some((word) => text.includes(word))) continue;
-    if (!keywords.some((word) => text.includes(word))) continue;
+    if (!normalizedKeywords.includes(text)) continue;
     if (!visible(el)) continue;
     const rect = el.getBoundingClientRect();
     const absoluteTop = Math.round(rect.top + window.scrollY);
@@ -3393,6 +4118,7 @@ class DetailScraper:
                             for scroll_y in (0, 1800, 3600, 5600, 7600, 9800):
                                 _cdp_eval(f"window.scrollTo(0,{int(scroll_y)}); true;", timeout=4)
                                 time.sleep(0.35)
+                                before_height = int((_scroll_metrics_via_cdp() or {}).get("scrollHeight") or 0)
                                 msg = _cdp_eval(script, timeout=8)
                                 val = (((msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
                                 if not (isinstance(val, dict) and val.get("found")):
@@ -3408,8 +4134,24 @@ class DetailScraper:
                                     val.get("text"),
                                     val.get("top"),
                                 )
-                                time.sleep(1.8)
-                                return True
+                                _dismiss_js_dialog_via_cdp("auction remaining detail-more")
+                                time.sleep(2.4)
+                                after_height = int((_scroll_metrics_via_cdp() or {}).get("scrollHeight") or 0)
+                                remaining = _auction_remaining_detail_more_count_via_cdp()
+                                if after_height > before_height + 300 or remaining == 0:
+                                    logger.info(
+                                        "[Detail] auction physical detail-more click verified: height=%s->%s remaining=%s",
+                                        before_height,
+                                        after_height,
+                                        remaining,
+                                    )
+                                    return True
+                                logger.info(
+                                    "[Detail] auction physical detail-more click not verified: height=%s->%s remaining=%s",
+                                    before_height,
+                                    after_height,
+                                    remaining,
+                                )
                             return False
                         except Exception as exc:
                             logger.debug("[Detail] auction remaining detail-more check skipped: %s", exc)
@@ -3418,9 +4160,11 @@ class DetailScraper:
                     if is_coupang or is_auction:
                         cdp_expanded = _expand_coupang_auction_detail_more_via_cdp()
                         if is_auction:
-                            cdp_expanded = _click_remaining_auction_detail_more_after_cdp() or cdp_expanded
                             if not cdp_expanded:
-                                cdp_expanded = _expand_auction_detail_more()
+                                if _auction_remaining_detail_more_count_via_cdp() == 0:
+                                    cdp_expanded = True
+                                else:
+                                    cdp_expanded = _click_remaining_auction_detail_more_after_cdp() or _expand_auction_detail_more()
                     else:
                         cdp_expanded = _expand_detail_more_via_cdp()
                     if cdp_expanded and (is_coupang or is_gmarket or is_auction):
@@ -3434,6 +4178,9 @@ class DetailScraper:
                             except Exception:
                                 pass
                         time.sleep(0.5)
+                        return
+                    if is_auction:
+                        logger.info("[Detail] Auction dedicated detail-more failed; generic color fallback disabled")
                         return
                     max_scroll_iters = 12 if is_coupang else 10 if is_gmarket else 12 if is_auction else 7
                     for _ in range(max_scroll_iters):
@@ -3688,14 +4435,18 @@ class DetailScraper:
                 const visible=e=>{const r=e.getBoundingClientRect();return r.width>20&&r.height>12&&r.bottom>0&&r.top<innerHeight};
                 const expandRe=/(\uc0c1\uc138|\uc0c1\ud488).*(\ub354\ubcf4\uae30|\ud3bc\uccd0\ubcf4\uae30)|\ud3bc\uccd0\ubcf4\uae30/;
                 let expandBottom=0;
+                if(!__ALREADY_EXPANDED__){
                 for(const e of Array.from(document.querySelectorAll('button,a,[role="button"]'))){
-                const t=text(e);if(!t||!visible(e)||!expandRe.test(t))continue;
-                try{e.scrollIntoView({block:'center'});await sleep(180);const r=e.getBoundingClientRect();const y=Math.round(r.bottom+scrollY);if(y>200)expandBottom=expandBottom?Math.min(expandBottom,y):y;e.click();await sleep(700)}catch(_){}
+                const t=text(e);if(!t||!expandRe.test(t))continue;
+                const er=e.getBoundingClientRect();if(er.width<20||er.height<12)continue;
+                if(er.left>innerWidth*.55)continue;
+                try{e.scrollIntoView({block:'center'});await sleep(250);const r=e.getBoundingClientRect();const y=Math.round(r.bottom+scrollY);if(y>200)expandBottom=expandBottom?Math.min(expandBottom,y):y;e.click();await sleep(900)}catch(_){}
+                }
                 }
                 let prev=0,stable=0;
-                for(let pass=0;pass<4&&stable<2;pass++){
-                const maxY=Math.min(pageH(),180000),step=Math.max(680,Math.floor(innerHeight*.86));
-                for(let y=0;y<=maxY+step;y+=step){scrollTo(0,y);await sleep(65)}
+                for(let pass=0;pass<6&&stable<2;pass++){
+                const maxY=Math.min(pageH(),260000),step=Math.max(680,Math.floor(innerHeight*.86));
+                for(let y=0;y<=maxY+step;y+=step){scrollTo(0,y);await sleep(150)}
                 await sleep(550);const now=pageH();if(Math.abs(now-prev)<80)stable++;else stable=0;prev=now;
                 }
                 scrollTo(0,0);await sleep(450);
@@ -3745,21 +4496,19 @@ class DetailScraper:
                 }
                 return out.sort((a,b)=>a.top-b.top);
                 }
-                let arr=collect(false);if(arr.length<3)arr=collect(true);if(arr.length>260)arr=arr.slice(0,260);
+                let arr=collect(false);if(arr.length<3)arr=collect(true);if(arr.length>520)arr=arr.slice(0,520);
                 if(!arr.length){document.title=MARK+' failed 0 images';return}
                 const firstImageTop=arr.length?arr[0].top:detailTop;
                 const texts=collectTexts().filter(o=>o.top>=firstImageTop-40).slice(0,80);
                 const blocks=arr.map(o=>Object.assign({type:'image'},o)).concat(texts).sort((a,b)=>(a.top-b.top)||((a.left||0)-(b.left||0)));
                 try{const payloadObj={marker:MARK,count:arr.length,textCount:texts.length,images:arr,texts,blocks};window.__JEPUM_NAVER_DETAIL_PAYLOAD=payloadObj;sessionStorage.setItem('__JEPUM_NAVER_DETAIL_PAYLOAD',JSON.stringify(payloadObj));}catch(_){}
-                const html=blocks.map(o=>o.type==='text'?'<p class="txt">'+esc(o.text)+'</p>':'<img src="'+esc(o.src)+'" loading="eager" decoding="sync">').join('');
-                const css='html,body{margin:0;padding:0;background:#fff;color:#111}body{font-family:Arial,sans-serif}.wrap{width:1040px;max-width:calc(100vw - 240px);margin:0 auto;padding:24px 0 90px}.meta{font-size:13px;color:#777;margin:0 0 18px}.meta b{color:#111}.txt{font-size:22px;line-height:1.62;text-align:center;white-space:pre-wrap;margin:18px auto 22px;max-width:900px;font-weight:500}img{display:block;max-width:100%;height:auto;margin:0 auto 18px;background:#fff}hr{border:0;border-top:1px solid #eee;margin:16px 0}';
-                document.open();
-                document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+MARK+' '+arr.length+' images '+texts.length+' texts</title><style>'+css+'</style></head><body><main class="wrap">'+html+'</main></body></html>');
-                document.close();setTimeout(()=>scrollTo(0,0),700);
+                document.title=MARK+' '+arr.length+' images '+texts.length+' texts';
+                scrollTo(0,0);
                 })()
                 """
                 script = "".join(line.strip() for line in script.splitlines())
                 script = script.replace("__DOWNLOAD_NAME__", download_name)
+                script = script.replace("__ALREADY_EXPANDED__", "true" if screen_detail_expanded else "false")
                 if not _run_address_bar_javascript(script, wait_sec=1.0):
                     return False
                 title_text = ""
@@ -3829,7 +4578,7 @@ class DetailScraper:
                             ),
                             "Referer": product_url,
                         }
-                        for item in image_items[:280]:
+                        for item in image_items[:560]:
                             src = str(item.get("src") or "").strip()
                             if not src:
                                 continue
@@ -3930,7 +4679,7 @@ class DetailScraper:
                             prepared: List[Image.Image] = []
                             image_segments = 0
                             text_segments = 0
-                            for block in block_items[:520]:
+                            for block in block_items[:900]:
                                 block_type = str(block.get("type") or "image")
                                 if block_type == "text":
                                     segment = _render_text_segment(str(block.get("text") or ""), text_segments)
@@ -4039,22 +4788,20 @@ class DetailScraper:
                     except Exception as exc:
                         result.setdefault("diagnostics", {})["naver_image_rebuild_error"] = str(exc)
                         logger.debug("[Detail] Naver image rebuild file processing skipped: %s", exc)
-                time.sleep(4.0)
+                # 이미지 다운로드 실패 — 원본 페이지(document.write 없이 보존됨)에서 screen capture 진행
                 try:
                     import pyautogui as _pag
                     _pag.hotkey("ctrl", "home")
                 except Exception:
                     pass
-                time.sleep(1.0)
-                naver_rebuilt_detail_page = True
-                screen_detail_expanded = True
+                time.sleep(0.5)
                 result.setdefault("diagnostics", {}).update({
-                    "naver_rebuilt_detail_page": True,
                     "naver_rebuild_verified": True,
                     "naver_rebuilt_image_count": image_count,
+                    "naver_rebuild_fallback_to_screen_capture": True,
                 })
-                logger.info("[Detail] Naver detail page rebuilt in-browser for %s", product_id)
-                return True
+                logger.info("[Detail] Naver bookmarklet payload ready, falling back to screen capture for %s", product_id)
+                return False
 
             render_hwnd = None
             def _find_renderer(child_hwnd, _):
@@ -4112,17 +4859,74 @@ class DetailScraper:
                 page_title = win32gui.GetWindowText(hwnd_target) or page_title
             if debug_port and (is_coupang or is_elevenst or is_gmarket or is_auction):
                 _prepare_screen_capture_layout()
+                # 옥션도 G마켓처럼 전체 페이지(상단~하단) fullpage CDP 먼저 시도
                 if _capture_fullpage_via_cdp():
+                    return result
+                # fullpage 실패 시 옥션 전용 섹션 타일러로 fallback
+                if is_auction and _capture_auction_detail_scroller_via_cdp():
                     return result
                 _cdp_eval("window.scrollTo(0, 0); document.scrollingElement && (document.scrollingElement.scrollTop = 0); true;")
                 time.sleep(0.35)
+                if is_auction:
+                    try:
+                        import pyautogui as _pag
+                        ctypes.windll.user32.SetForegroundWindow(hwnd_target)
+                        time.sleep(0.08)
+                        if render_hwnd:
+                            win32api.SendMessage(render_hwnd, win32con.WM_KEYDOWN, VK_HOME, HOME_DN)
+                            time.sleep(0.05)
+                            win32api.SendMessage(render_hwnd, win32con.WM_KEYUP, VK_HOME, HOME_UP)
+                        reset_msg = _cdp_eval(
+                            "(() => {"
+                            "window.scrollTo(0, 0);"
+                            "document.documentElement.scrollTop = 0;"
+                            "document.body && (document.body.scrollTop = 0);"
+                            "for (const el of Array.from(document.querySelectorAll('main,section,article,div,iframe')).slice(0, 9000)) {"
+                            "  if ((el.scrollHeight - el.clientHeight) > 80) el.scrollTop = 0;"
+                            "}"
+                            "const detailCandidates = Array.from(document.querySelectorAll('#item_detail_view_js, .box__detail-view, [id*=\"detail_view\"], [class*=\"detail-view\"]'))"
+                            "  .map((el) => ({el, rect: el.getBoundingClientRect(), scrollHeight: Math.round(el.scrollHeight || 0), clientHeight: Math.round(el.clientHeight || 0)}))"
+                            "  .filter((item) => item.scrollHeight > 500 || item.rect.height > 500)"
+                            "  .sort((a, b) => (b.scrollHeight + b.rect.height) - (a.scrollHeight + a.rect.height));"
+                            "const detail = detailCandidates[0] && detailCandidates[0].el;"
+                            "if (detail) {"
+                            "  detail.scrollTop = 0;"
+                            "  const scrollables = [];"
+                            "  for (let p = detail.parentElement; p; p = p.parentElement) {"
+                            "    if ((p.scrollHeight - p.clientHeight) > 80) scrollables.unshift(p);"
+                            "  }"
+                            "  for (const p of scrollables) {"
+                            "    const pr = p.getBoundingClientRect();"
+                            "    const dr = detail.getBoundingClientRect();"
+                            "    p.scrollTop += Math.round(dr.top - pr.top - 24);"
+                            "  }"
+                            "  detail.scrollIntoView({block: 'start', inline: 'nearest'});"
+                            "  const afterRect = detail.getBoundingClientRect();"
+                            "  if (afterRect.top > Math.max(220, window.innerHeight * 0.55)) {"
+                            "    window.scrollBy(0, Math.round(afterRect.top - 120));"
+                            "  } else if (afterRect.top < 0) {"
+                            "    window.scrollBy(0, Math.round(afterRect.top - 16));"
+                            "  }"
+                            "}"
+                            "return detail ? {found: true, top: Math.round(detail.getBoundingClientRect().top), scrollHeight: Math.round(detail.scrollHeight || 0), clientHeight: Math.round(detail.clientHeight || 0), candidates: detailCandidates.length} : {found: false, candidates: detailCandidates.length};"
+                            "})()",
+                            timeout=8,
+                        )
+                        reset_value = (((reset_msg or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                        time.sleep(0.55)
+                        logger.info("[Detail] Auction visible window moved to detail before screen capture: %s", reset_value)
+                    except Exception as exc:
+                        logger.debug("[Detail] Auction visible top reset skipped: %s", exc)
 
             VK_SPACE = 0x20
             SPACE_DN = 1 | (0x39 << 16)
             SPACE_UP = SPACE_DN | (1 << 30) | (1 << 31)
             SCROLL_COUNT = 18
             naver_expected_scrolls = 0
+            auction_expected_scrolls = 0
+            auction_reached_bottom = False
             estimated_step = 420   # CDP 없을 때 스크롤량 추정용 기본값
+            scroll_height = 0
             scroll_height = 0
             viewport_height = 0
             if is_naver:
@@ -4138,7 +4942,20 @@ class DetailScraper:
                     estimated_step = max(420, int((win_h - CHROME_UI) * 0.88))
                 if scroll_height and estimated_step:
                     naver_expected_scrolls = int((scroll_height + estimated_step - 1) // estimated_step) + 4
-                    SCROLL_COUNT = max(32, min(86, naver_expected_scrolls))
+                    SCROLL_COUNT = max(32, min(160, naver_expected_scrolls))
+            elif is_auction:
+                metrics = _scroll_metrics_via_cdp()
+                scroll_height = int(metrics.get("scrollHeight") or 0)
+                viewport_height = int(metrics.get("innerHeight") or 0)
+                if viewport_height:
+                    estimated_step = max(520, int(viewport_height * 0.82))
+                else:
+                    estimated_step = max(520, int((win_h - CHROME_UI) * 0.82))
+                if scroll_height and estimated_step:
+                    auction_expected_scrolls = int((scroll_height + estimated_step - 1) // estimated_step) + 8
+                    SCROLL_COUNT = max(34, min(160, auction_expected_scrolls))
+                else:
+                    SCROLL_COUNT = 72
             screenshots = []
             duplicate_tail_frames = 0
             scroll_positions: List[int] = []
@@ -4148,14 +4965,14 @@ class DetailScraper:
                 if _si == 0:
                     _dismiss_naver_popup()
                 try:
-                    frame_metrics = _scroll_metrics_via_cdp() if debug_port and is_naver else {}
+                    frame_metrics = _scroll_metrics_via_cdp() if debug_port and (is_naver or is_auction) else {}
                     full_img = _print_window_capture(hwnd_target)
                     content = full_img.crop((0, CHROME_UI, win_w, win_h))
                     if screenshots:
                         diff = _screen_frame_diff(screenshots[-1], content)
                         if diff < 0.8:
                             duplicate_tail_frames += 1
-                            min_duplicate_frames = 6 if is_naver else 3
+                            min_duplicate_frames = 6 if is_naver else (8 if is_auction else 3)
                             if len(screenshots) >= min_duplicate_frames and duplicate_tail_frames >= 3:
                                 logger.info(
                                     "[Detail] stopped screen capture at duplicate tail frame %s (diff=%.2f)",
@@ -4177,7 +4994,25 @@ class DetailScraper:
                             # CDP 없음: estimated_step 누적으로 추정
                             scroll_positions.append(_si * estimated_step)
                             scroll_page_heights.append(scroll_height)
+                    elif is_auction and frame_metrics:
+                        # Auction CDP: 정확한 절대 scrollY 사용 (심리스 스티칭용)
+                        scroll_positions.append(int(frame_metrics.get("scrollY") or 0))
+                        scroll_page_heights.append(int(frame_metrics.get("scrollHeight") or scroll_height))
                     full_img.close()
+                    if is_auction and frame_metrics:
+                        current_y = int(frame_metrics.get("scrollY") or 0)
+                        current_inner = int(frame_metrics.get("innerHeight") or viewport_height or 0)
+                        current_height = int(frame_metrics.get("scrollHeight") or scroll_height or 0)
+                        if current_height and current_inner and current_y + current_inner >= current_height - 24:
+                            auction_reached_bottom = True
+                            logger.info(
+                                "[Detail] Auction screen capture reached bottom at frame %s y=%s inner=%s height=%s",
+                                _si,
+                                current_y,
+                                current_inner,
+                                current_height,
+                            )
+                            break
                 except Exception as e:
                     logger.warning(f"[{product_id}] 캡처 {_si} 실패: {e}")
 
@@ -4213,6 +5048,23 @@ class DetailScraper:
                                 )
                                 time.sleep(0.05)
                                 _pag.press("pagedown")
+                            elif is_auction:
+                                logger.info("[Detail] Auction physical scroll fallback at frame %s", _si)
+                                _pag.press("esc")
+                                time.sleep(0.05)
+                                focus_x = left + int((right - left) * 0.42)
+                                focus_y = top + CHROME_UI + min(540, max(300, (bottom - top - CHROME_UI) // 2))
+                                try:
+                                    win32api.SetCursorPos((int(focus_x), int(focus_y)))
+                                    time.sleep(0.03)
+                                    win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -720, 0)
+                                    time.sleep(0.06)
+                                    win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -720, 0)
+                                except Exception:
+                                    _pag.moveTo(focus_x, focus_y)
+                                    _pag.scroll(-7)
+                                time.sleep(0.08)
+                                _pag.press("pagedown")
                             else:
                                 focus_x = left + int((right - left) * 0.45)
                                 focus_y = top + CHROME_UI + min(520, max(260, (bottom - top - CHROME_UI) // 2))
@@ -4243,6 +5095,10 @@ class DetailScraper:
                 "scroll_driver": scroll_driver,
                 "scroll_count_limit": SCROLL_COUNT,
                 "naver_expected_scrolls": naver_expected_scrolls,
+                "auction_expected_scrolls": auction_expected_scrolls,
+                "auction_reached_bottom": bool(auction_reached_bottom),
+                "initial_scroll_height": int(scroll_height or 0),
+                "initial_viewport_height": int(viewport_height or 0),
                 "target_title": page_title,
                 "detail_expanded": bool(screen_detail_expanded),
                 "naver_rebuilt_detail_page": bool(naver_rebuilt_detail_page),
@@ -4266,7 +5122,7 @@ class DetailScraper:
                     crop_left_ratio = 0.06
                     crop_right_ratio = 0.94
             crop_top_after_first = (48 if naver_rebuilt_detail_page else 72) if is_naver else 0
-            if is_naver and len(scroll_positions) == len(screenshots) and len(set(scroll_positions)) >= 3:
+            if (is_naver or is_auction) and len(scroll_positions) == len(screenshots) and len(set(scroll_positions)) >= 3:
                 merged, stitch_diagnostics = _stitch_screen_frames_by_scroll_positions(
                     screenshots,
                     scroll_positions,
