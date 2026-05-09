@@ -116,12 +116,12 @@ class ProCrawler:
         except Exception:
             return None
 
-    def _get_proxy(self) -> Optional[str]:
+    def _get_proxy(self, platform: str = "") -> Optional[str]:
         if self._fixed_proxy:
             return self._fixed_proxy
         try:
             from engine.ip_manager import get_proxy
-            return get_proxy()
+            return get_proxy(platform)
         except Exception:
             return None
 
@@ -138,68 +138,108 @@ class ProCrawler:
         requests 계열 (SmartSession)로 URL을 가져온다.
         실패 시 Playwright 폴백.
         """
-        # 1) 속도 제한
-        self._rate_wait(url)
+        plat = platform or ""
+        t_start = time.monotonic()
 
-        # 2) 세션 + 쿠키 준비
-        session, browser_sess = self._prepare_session(url, platform)
-
-        # 3) 지역 헤더 + Referer
-        headers = {}
-        if self._regional:
-            sf_site = "same-site" if referer and urlparse(referer).netloc == urlparse(url).netloc else "none"
-            headers = self._regional.browser_headers(referer=referer, sec_fetch_site=sf_site)
-        if referer:
-            headers["Referer"] = referer
-
-        # 4) 쿠키 병합 (세션 쿠키 + bypass 쿠키 + 지역 쿠키 + 추가 쿠키)
-        cookies = {}
-        if browser_sess:
-            from engine.session_manager import CookieHistoryBuilder
-            cookies.update(CookieHistoryBuilder.get_cookies_for_request(browser_sess, url))
-        if self._regional:
-            domain = urlparse(url).netloc
-            cookies.update(self._regional.regional_cookies(domain))
-        if extra_cookies:
-            cookies.update(extra_cookies)
-
-        # 5) bypass 쿠키 획득 (쿠팡 등 Akamai)
-        bypass_ck = self._acquire_bypass_cookies(url)
-        cookies.update(bypass_ck)
-
-        # 6) 요청 실행
+        # ip_manager use_proxy_for 컨텍스트로 플랫폼별 프록시 선택 + 결과 기록
         try:
-            raw = session.get(url, headers=headers, cookies=cookies)
-            html        = raw.text
-            status      = raw.status_code
-            resp_cookies = dict(raw.cookies) if hasattr(raw.cookies, 'items') else {}
-        except Exception as e:
-            logger.warning(f"[ProCrawler] requests 실패: {e}")
-            html, status, resp_cookies = "", 0, {}
+            from engine.ip_manager import use_proxy_for, record_active_result
+            _use_proxy_ctx = use_proxy_for(plat)
+        except Exception:
+            _use_proxy_ctx = None
 
-        # 7) 속도 조절 피드백
-        if status:
-            self._rate_feedback(url, status)
+        def _do_fetch():
+            nonlocal t_start
+            # 1) 속도 제한
+            self._rate_wait(url)
 
-        # 8) 세션 쿠키 업데이트
-        if browser_sess:
-            browser_sess.update_cookies(resp_cookies)
-            browser_sess.update_cookies(cookies)
-            browser_sess.add_visit(url)
+            # 2) 세션 + 쿠키 준비
+            session, browser_sess = self._prepare_session(url, plat)
+
+            # 3) 지역 헤더 + Referer
+            headers = {}
+            if self._regional:
+                sf_site = "same-site" if referer and urlparse(referer).netloc == urlparse(url).netloc else "none"
+                headers = self._regional.browser_headers(referer=referer, sec_fetch_site=sf_site)
+            if referer:
+                headers["Referer"] = referer
+
+            # 4) 쿠키 병합 (세션 쿠키 + bypass 쿠키 + 지역 쿠키 + 추가 쿠키)
+            cookies = {}
+            if browser_sess:
+                from engine.session_manager import CookieHistoryBuilder
+                cookies.update(CookieHistoryBuilder.get_cookies_for_request(browser_sess, url))
+            if self._regional:
+                domain = urlparse(url).netloc
+                cookies.update(self._regional.regional_cookies(domain))
+            if extra_cookies:
+                cookies.update(extra_cookies)
+
+            # 5) bypass 쿠키 획득 (쿠팡 등 Akamai)
+            bypass_ck = self._acquire_bypass_cookies(url)
+            cookies.update(bypass_ck)
+
+            # 6) 요청 실행
+            req_error = ""
             try:
-                from engine.session_manager import get_pool
-                get_pool().release(browser_sess)
-            except Exception:
-                pass
+                raw = session.get(url, headers=headers, cookies=cookies)
+                html        = raw.text
+                status      = raw.status_code
+                resp_cookies = dict(raw.cookies) if hasattr(raw.cookies, 'items') else {}
+            except Exception as e:
+                logger.warning(f"[ProCrawler] requests 실패: {e}")
+                html, status, resp_cookies = "", 0, {}
+                req_error = str(e)
 
-        # 9) 차단 감지 → Playwright 폴백
-        if self._is_blocked(html, status) and self._pw_fallback:
-            logger.info(f"[ProCrawler] 차단 감지 → Playwright 폴백: {url[:60]}")
-            html = self.fetch_playwright(url, platform=platform, referer=referer)
-            return ProResponse(html, 200 if html else 0, cookies, "playwright")
+            duration_ms = int((time.monotonic() - t_start) * 1000)
 
-        backend = getattr(session, '_backend', 'unknown')
-        return ProResponse(html, status, {**cookies, **resp_cookies}, backend)
+            # 7) 속도 조절 피드백
+            if status:
+                self._rate_feedback(url, status)
+
+            # 8) 프록시 결과 기록
+            blocked = self._is_blocked(html, status)
+            if _use_proxy_ctx is not None:
+                try:
+                    record_active_result(
+                        platform=plat,
+                        status="blocked" if blocked else ("ok" if status == 200 else str(status)),
+                        success=not blocked and status == 200,
+                        duration_ms=duration_ms,
+                        error=req_error,
+                    )
+                except Exception:
+                    pass
+
+            # 9) 세션 쿠키 업데이트
+            if browser_sess:
+                browser_sess.update_cookies(resp_cookies)
+                browser_sess.update_cookies(cookies)
+                browser_sess.add_visit(url)
+                try:
+                    from engine.session_manager import get_pool
+                    get_pool().release(browser_sess)
+                except Exception:
+                    pass
+
+            # 10) 차단 감지 → Playwright 폴백
+            if blocked and self._pw_fallback:
+                logger.info(f"[ProCrawler] 차단 감지 → Playwright 폴백: {url[:60]}")
+                pw_html = self.fetch_playwright(url, platform=plat, referer=referer)
+                return ProResponse(pw_html, 200 if pw_html else 0, cookies, "playwright")
+
+            backend = getattr(session, '_backend', 'unknown')
+            return ProResponse(html, status, {**cookies, **resp_cookies}, backend)
+
+        if _use_proxy_ctx is not None:
+            try:
+                with _use_proxy_ctx:
+                    return _do_fetch()
+            except Exception as e:
+                logger.warning(f"[ProCrawler] use_proxy_for 컨텍스트 오류: {e}")
+                return _do_fetch()
+        else:
+            return _do_fetch()
 
     def fetch_playwright(
         self,
@@ -219,18 +259,32 @@ class ProCrawler:
             logger.error("[ProCrawler] Playwright 미설치")
             return ""
 
+        plat = platform or ""
+        t_start = time.monotonic()
+
+        # ip_manager 컨텍스트 (이미 use_proxy_for 안에 있으면 active_selection 재사용)
+        try:
+            from engine.ip_manager import get_active_selection, record_active_result
+            _has_ip_ctx = True
+        except Exception:
+            _has_ip_ctx = False
+
         # 스텔스 스크립트
         stealth = self._build_stealth_script()
-        proxy = self._get_proxy()
+        proxy = self._get_proxy(plat)
         pw_proxy = None
         if proxy:
-            from urllib.parse import urlparse as _up
-            p = _up(proxy)
-            pw_proxy = {
-                "server": f"{p.scheme}://{p.hostname}:{p.port}",
-                **({"username": p.username, "password": p.password}
-                   if p.username else {}),
-            }
+            try:
+                from engine.ip_manager import playwright_proxy as _pw_proxy
+                pw_proxy = _pw_proxy(proxy)
+            except Exception:
+                from urllib.parse import urlparse as _up
+                p = _up(proxy)
+                pw_proxy = {
+                    "server": f"{p.scheme}://{p.hostname}:{p.port}",
+                    **({"username": p.username, "password": p.password}
+                       if p.username else {}),
+                }
 
         html = ""
         browser = None
@@ -374,6 +428,18 @@ class ProCrawler:
                 except Exception:
                     pass
 
+                # 프록시 결과 기록 (성공)
+                if _has_ip_ctx and html:
+                    try:
+                        record_active_result(
+                            platform=plat,
+                            status="ok",
+                            success=True,
+                            duration_ms=int((time.monotonic() - t_start) * 1000),
+                        )
+                    except Exception:
+                        pass
+
                 context.close()
                 if browser:
                     if context:
@@ -386,6 +452,18 @@ class ProCrawler:
 
             except Exception as e:
                 logger.error(f"[ProCrawler] Playwright 오류: {e}")
+                # 프록시 결과 기록 (실패)
+                if _has_ip_ctx:
+                    try:
+                        record_active_result(
+                            platform=plat,
+                            status="error",
+                            success=False,
+                            duration_ms=int((time.monotonic() - t_start) * 1000),
+                            error=str(e),
+                        )
+                    except Exception:
+                        pass
                 try:
                     browser.close()
                 except Exception:
@@ -400,7 +478,7 @@ class ProCrawler:
 
     def _prepare_session(self, url: str, platform: Optional[str]):
         """SmartSession + BrowserSession 준비."""
-        proxy = self._get_proxy()
+        proxy = self._get_proxy(platform or "")
 
         # BrowserSession 가져오기 (세션 나이 + 쿠키 이력)
         browser_sess = None
