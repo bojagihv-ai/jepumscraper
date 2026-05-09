@@ -8,6 +8,7 @@ from services.history_db import create_job, update_job_status, add_result
 from services.search_service import SearchService
 from services.detail_scraper import DetailScraper
 from services import adaptive_learning
+from services import gdrive_uploader
 import progress_store
 import config
 
@@ -109,12 +110,33 @@ class BackgroundJobQueue:
                             res.get("status", "success"),
                         )
                 detail_path = ''
-                if slice_height > 0 and "screenshots" in res and res["screenshots"]:
-                    # 분할 모드라면 첫 번째 샷 경로, 추후 리스트를 DB에 문자열로 통째 저장할 수 있도록 수정
-                    detail_path = ";".join(res["screenshots"])
-                elif res.get("screenshots") and len(res["screenshots"]) > 0:
-                    detail_path = res["screenshots"][0] # fullpage fallback
-                    
+                screenshot_list = res.get("screenshots") or []
+                if slice_height > 0 and screenshot_list:
+                    detail_path = ";".join(screenshot_list)
+                elif screenshot_list:
+                    detail_path = screenshot_list[0]
+
+                # Google Drive 자동 업로드 (설정된 경우)
+                gdrive_folder = settings.get('gdrive_folder', 'JepumScraper 상세이미지')
+                gdrive_enabled = settings.get('gdrive_enabled', False)
+                if gdrive_enabled and screenshot_list:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(
+                            None,
+                            gdrive_uploader.upload_multiple,
+                            screenshot_list,
+                            keyword,
+                            p.id,
+                            gdrive_folder,
+                            getattr(p, 'title', ''),
+                            getattr(p, 'platform', ''),
+                            getattr(p, 'seller_name', '') or getattr(p, 'platform', ''),
+                            getattr(p, 'product_url', ''),
+                        )
+                    except Exception as _gde:
+                        logger.warning(f"[GDrive] 업로드 중 예외: {_gde}")
+
                 result_data = {
                     'platform': p.platform,
                     'id': p.id,
@@ -123,6 +145,7 @@ class BackgroundJobQueue:
                     'product_url': p.product_url,
                     'thumbnail_path': p.local_thumbnail_path,
                     'detail_path': detail_path,
+                    'seller_name': getattr(p, 'seller_name', '') or p.platform,
                     'match_tier': tier
                 }
                 add_result(job_id, result_data)

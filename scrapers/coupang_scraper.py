@@ -596,6 +596,7 @@ def _parse_coupang_html(html: str, max_count: int) -> List[ProductResult]:
             results.append(ProductResult(
                 id=prod_id, platform="쿠팡", title=title,
                 price=str(price), product_url=item_link, thumbnail_url=thumb_url,
+                seller_name="쿠팡",
             ))
         except Exception as e:
             logger.debug(f"[쿠팡] 파싱 오류: {e}")

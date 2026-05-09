@@ -89,6 +89,14 @@ class GmarketScraper(BaseScraper):
                     price = 0
                 if price == 0:
                     continue
+
+                seller_name = ""
+                seller_tag = item.select_one(
+                    '.box__seller .text__seller, .link__seller, .text__seller, '
+                    '[class*="seller"] a, [class*="seller"]'
+                )
+                if seller_tag:
+                    seller_name = re.sub(r'\s+', ' ', seller_tag.get_text(' ', strip=True)).strip()
                 
                 thumb_url = ""
                 img_tag = item.select_one('img.image__item')
@@ -112,7 +120,8 @@ class GmarketScraper(BaseScraper):
                     title=title,
                     price=str(price),
                     product_url=item_link,
-                    thumbnail_url=thumb_url
+                    thumbnail_url=thumb_url,
+                    seller_name=seller_name or "G마켓",
                 )
                 results.append(res)
                 

@@ -43,6 +43,8 @@ CHROME_PROFILE_DIRECTORY = os.getenv('CHROME_PROFILE_DIRECTORY', 'Default')
 NAVER_CHROME_PROFILE_DIRECTORY = os.getenv('NAVER_CHROME_PROFILE_DIRECTORY', '')
 NAVER_LOGIN_WAIT_SEC = int(os.getenv('NAVER_LOGIN_WAIT_SEC', '240'))
 NAVER_DEBUG_PORT = int(os.getenv('NAVER_DEBUG_PORT', '0') or '0')
+ENABLE_NAVER_RIGHT_RAIL_CROP = os.getenv('ENABLE_NAVER_RIGHT_RAIL_CROP', '1') != '0'
+NAVER_RIGHT_RAIL_CROP_WIDTH = int(os.getenv('NAVER_RIGHT_RAIL_CROP_WIDTH', '1240'))
 COUPANG_USE_DEDICATED_PROFILE = os.getenv('COUPANG_USE_DEDICATED_PROFILE', '1') != '0'
 COUPANG_BROWSER_PROFILE_DIR = os.getenv(
     'COUPANG_BROWSER_PROFILE_DIR',
@@ -80,6 +82,17 @@ os.makedirs(BYPASS_CACHE_DIR, exist_ok=True)
 
 # --- 모델 설정 ---
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
+
+# --- AI 엔진 설정 (Gemma4 / OpenAI / Gemini) ---
+AI_ENGINE_ENABLED = False
+AI_ENGINE_TYPE = "ollama"          # 'ollama' | 'openai' | 'gemini'
+AI_MODEL = "gemma4:latest"         # 모델명 (엔진별로 다름)
+AI_OLLAMA_URL = "http://localhost:11434"
+AI_OPENAI_KEY = os.getenv("OPENAI_API_KEY", "")
+AI_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+AI_USE_KEYWORDS = True             # 검색어 최적화 (검색 전 1회)
+AI_USE_RANKING = False             # 후보 재랭킹 (후보당 LLM 호출 → 느림)
+AI_RANKING_TOP_N = 20              # 재랭킹 대상 상위 N개
 
 # --- 매칭 임계값 (Thresholds) ---
 PHASH_THRESHOLD = 5         # 1단계: 완전히 동일한 이미지 (해밍 거리 <= 5)

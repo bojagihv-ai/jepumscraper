@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JepumSangse — 배치 자동화</title>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0a0c14;
+            --surface: #111520;
+            --card: #181d2e;
+            --border: #252b42;
+            --primary: #6366f1;
+            --primary-h: #4f52d4;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text: #e8eaf0;
+            --muted: #7a8099;
+            --radius: 14px;
+        }
+        body {
+            font-family: 'Pretendard', 'Apple SD Gothic Neo', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 28px 16px 80px;
+        }
+
+        /* ── 헤더 ── */
+        .page-header {
+            max-width: 860px;
+            margin: 0 auto 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .back-btn {
+            display: flex; align-items: center; gap: 6px;
+            padding: 8px 14px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--muted);
+            font-size: .84rem; font-weight: 600; cursor: pointer;
+            text-decoration: none; transition: all .2s;
+        }
+        .back-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .page-header h1 { font-size: 1.5rem; font-weight: 800; }
+        .page-header span { font-size: .82rem; color: var(--muted); margin-left: 8px; }
+
+        /* ── 탭 네비 ── */
+        .tab-nav {
+            max-width: 860px;
+            margin: 0 auto 20px;
+            display: flex; gap: 4px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 4px;
+        }
+        .tab-btn {
+            flex: 1; padding: 10px;
+            background: none; border: none;
+            border-radius: 8px;
+            color: var(--muted); font-size: .88rem; font-weight: 600;
+            cursor: pointer; transition: all .2s;
+        }
+        .tab-btn.active {
+            background: var(--primary); color: #fff;
+        }
+        .tab-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+        /* ── 패널 공통 ── */
+        .panel {
+            display: none;
+            max-width: 860px;
+            margin: 0 auto;
+        }
+        .panel.active { display: block; }
+
+        /* ── 카드 ── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 28px 32px;
+            margin-bottom: 18px;
+        }
+        .card-title {
+            font-size: .78rem; font-weight: 700;
+            letter-spacing: .6px; text-transform: uppercase;
+            color: var(--muted); margin-bottom: 18px;
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        /* ── 폼 요소 ── */
+        .field-row { margin-bottom: 18px; }
+        .field-label {
+            font-size: .8rem; font-weight: 700;
+            letter-spacing: .5px; text-transform: uppercase;
+            color: var(--muted); margin-bottom: 8px;
+        }
+        .field-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--card);
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: .95rem; font-family: inherit;
+            transition: border-color .2s;
+        }
+        .field-input:focus { outline: none; border-color: var(--primary); }
+        .field-input::placeholder { color: var(--muted); }
+        .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 520px) { .row-2 { grid-template-columns: 1fr; } }
+
+        /* ── 이미지 드롭존 ── */
+        .drop-zone {
+            border: 2px dashed var(--primary);
+            border-radius: 12px;
+            background: rgba(99,102,241,.06);
+            min-height: 130px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: all .2s; position: relative; overflow: hidden;
+        }
+        .drop-zone:hover, .drop-zone.over { background: rgba(99,102,241,.12); }
+        .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .drop-hint { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--muted); pointer-events: none; }
+        #imgPreview { display: none; width: 100%; padding: 12px; flex-direction: column; align-items: center; gap: 8px; }
+        #imgPreview img { max-width: 100%; max-height: 200px; object-fit: contain; border-radius: 8px; background: #fff; }
+
+        /* ── 키워드 테이블 ── */
+        .kw-table { width: 100%; border-collapse: collapse; }
+        .kw-table th {
+            font-size: .75rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: .5px; color: var(--muted);
+            padding: 8px 10px; border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+        .kw-row td { padding: 8px 6px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+        .kw-row:last-child td { border-bottom: none; }
+        .kw-num {
+            width: 28px; height: 28px; border-radius: 50%;
+            background: var(--primary); color: #fff;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: .8rem; font-weight: 700; flex-shrink: 0;
+        }
+        .kw-input {
+            width: 100%;
+            padding: 9px 12px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text); font-size: .9rem; font-family: inherit;
+        }
+        .kw-input:focus { outline: none; border-color: var(--primary); }
+        .kw-sel {
+            padding: 8px 10px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text); font-size: .84rem; font-family: inherit;
+            width: 130px;
+        }
+        .kw-sel:focus { outline: none; border-color: var(--primary); }
+        .btn-del {
+            width: 28px; height: 28px; border-radius: 6px;
+            background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3);
+            color: var(--danger); cursor: pointer; font-size: .9rem;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .btn-del:hover { background: rgba(239,68,68,.25); }
+        .btn-add-kw {
+            display: flex; align-items: center; gap: 8px;
+            padding: 10px 16px; margin-top: 12px;
+            background: rgba(99,102,241,.1); border: 1px dashed rgba(99,102,241,.4);
+            border-radius: 8px; color: var(--primary);
+            font-size: .86rem; font-weight: 600; cursor: pointer;
+            width: 100%; justify-content: center;
+            transition: all .2s;
+        }
+        .btn-add-kw:hover { background: rgba(99,102,241,.18); }
+
+        /* ── 설정 그리드 ── */
+        .setting-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+            gap: 12px;
+        }
+        .setting-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .setting-label { font-size: .88rem; color: var(--text); font-weight: 500; }
+        .setting-sub { font-size: .75rem; color: var(--muted); margin-top: 2px; }
+        .toggle-switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute; inset: 0; cursor: pointer;
+            background: var(--border); border-radius: 24px; transition: .25s;
+        }
+        .toggle-slider::before {
+            content: ''; position: absolute;
+            width: 18px; height: 18px; border-radius: 50%;
+            background: #fff; left: 3px; top: 3px; transition: .25s;
+        }
+        .toggle-switch input:checked + .toggle-slider { background: var(--primary); }
+        .toggle-switch input:checked + .toggle-slider::before { transform: translateX(20px); }
+
+        /* ── 버튼 ── */
+        .btn-primary {
+            padding: 14px 28px;
+            background: var(--primary); border: none;
+            border-radius: 12px; color: #fff;
+            font-size: 1rem; font-weight: 700; font-family: inherit;
+            cursor: pointer; transition: background .2s;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .btn-primary:hover:not(:disabled) { background: var(--primary-h); }
+        .btn-primary:disabled { background: var(--border); cursor: not-allowed; }
+        .btn-success {
+            padding: 10px 22px;
+            background: var(--success); border: none;
+            border-radius: 10px; color: #fff;
+            font-size: .9rem; font-weight: 700; font-family: inherit; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-warning {
+            padding: 10px 22px;
+            background: var(--warning); border: none;
+            border-radius: 10px; color: #000;
+            font-size: .9rem; font-weight: 700; font-family: inherit; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-danger {
+            padding: 10px 22px;
+            background: rgba(239,68,68,.15); border: 1px solid var(--danger);
+            border-radius: 10px; color: var(--danger);
+            font-size: .9rem; font-weight: 700; font-family: inherit; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-ghost {
+            padding: 10px 22px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; color: var(--muted);
+            font-size: .9rem; font-weight: 600; font-family: inherit; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-ghost:hover { border-color: var(--text); color: var(--text); }
+
+        /* ── 진행 표시 ── */
+        .progress-bar-wrap {
+            background: var(--card); border-radius: 8px;
+            height: 12px; overflow: hidden; margin-bottom: 6px;
+        }
+        .progress-bar-fill {
+            height: 100%; background: var(--primary);
+            border-radius: 8px; transition: width .5s ease;
+        }
+        .progress-label {
+            font-size: .8rem; color: var(--muted);
+            display: flex; justify-content: space-between;
+        }
+        .status-badge {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 4px 10px; border-radius: 20px;
+            font-size: .78rem; font-weight: 700;
+        }
+        .badge-pending  { background: rgba(120,120,120,.15); color: var(--muted); }
+        .badge-running  { background: rgba(99,102,241,.15); color: #818cf8; }
+        .badge-completed{ background: rgba(34,197,94,.15);  color: var(--success); }
+        .badge-failed   { background: rgba(239,68,68,.15);  color: var(--danger); }
+        .badge-cancelled{ background: rgba(245,158,11,.15); color: var(--warning); }
+        .badge-paused   { background: rgba(245,158,11,.15); color: var(--warning); }
+
+        /* ── 키워드 진행 리스트 ── */
+        .kw-progress-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+        .kw-progress-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 12px 16px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; cursor: default;
+            transition: border-color .2s;
+        }
+        .kw-progress-item.active { border-color: var(--primary); }
+        .kw-progress-item.done   { border-color: rgba(34,197,94,.3); }
+        .kw-progress-item.failed { border-color: rgba(239,68,68,.3); }
+        .kw-icon { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: .9rem; }
+        .kw-icon.pending  { background: var(--border); }
+        .kw-icon.running  { background: rgba(99,102,241,.2); color: #818cf8; }
+        .kw-icon.completed{ background: rgba(34,197,94,.15); color: var(--success); }
+        .kw-icon.failed   { background: rgba(239,68,68,.12); color: var(--danger); }
+        .kw-icon.cancelled{ background: rgba(245,158,11,.12); color: var(--warning); }
+        .kw-meta { flex: 1; min-width: 0; }
+        .kw-name { font-size: .9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kw-stats { font-size: .76rem; color: var(--muted); margin-top: 2px; }
+        .kw-link { font-size: .78rem; color: #818cf8; text-decoration: none; white-space: nowrap; }
+        .kw-link:hover { text-decoration: underline; }
+        .kw-dup-badge {
+            font-size: .7rem; padding: 2px 7px; border-radius: 10px;
+            background: rgba(245,158,11,.15); color: var(--warning);
+            flex-shrink: 0;
+        }
+
+        /* ── 로그 ── */
+        .log-box {
+            background: #0d1117; border: 1px solid var(--border);
+            border-radius: 10px; padding: 12px 14px;
+            max-height: 220px; overflow-y: auto;
+            font-family: 'Consolas', 'D2Coding', monospace;
+            font-size: .75rem; line-height: 1.55;
+        }
+        .log-box .l { color: var(--muted); }
+        .log-box .l.ok { color: var(--success); }
+        .log-box .l.err { color: var(--danger); }
+        .log-box .l.cur { color: var(--text); font-weight: 600; }
+        .log-box .l.warn { color: var(--warning); }
+
+        /* ── 보고서 ── */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+            gap: 12px;
+            margin-bottom: 22px;
+        }
+        .summary-card {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 16px 18px;
+        }
+        .summary-card .sc-val {
+            font-size: 1.8rem; font-weight: 800;
+            color: var(--primary); line-height: 1;
+            margin-bottom: 6px;
+        }
+        .summary-card .sc-label { font-size: .78rem; color: var(--muted); }
+
+        /* ── 키워드 어코디언 ── */
+        .kw-accord {
+            border: 1px solid var(--border); border-radius: 12px;
+            overflow: hidden; margin-bottom: 10px;
+        }
+        .kw-accord-head {
+            display: flex; align-items: center; gap: 12px;
+            padding: 14px 18px;
+            background: var(--card); cursor: pointer;
+            border: none; width: 100%; text-align: left;
+            color: var(--text);
+        }
+        .kw-accord-head:hover { background: #1d2337; }
+        .kw-accord-body {
+            max-height: 0; overflow: hidden;
+            background: var(--surface);
+            transition: max-height .3s ease;
+        }
+        .kw-accord-body.open { max-height: 5200px; }
+        .kw-accord-inner { padding: 16px 20px; }
+
+        .stat-row {
+            display: flex; justify-content: space-between;
+            padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+            font-size: .86rem;
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row .sv { font-weight: 700; color: var(--primary); }
+
+        .dup-list { margin-top: 8px; }
+        .dup-item {
+            padding: 7px 10px; border-radius: 6px;
+            background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.2);
+            margin-bottom: 5px; font-size: .78rem; color: var(--muted);
+        }
+        .dup-item .dt { font-weight: 600; color: var(--text); }
+        .dup-item .dr { color: var(--warning); margin-top: 2px; }
+
+        .item-report-section { margin-top: 14px; }
+        .item-report-title {
+            font-size: .78rem; color: var(--muted); font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .item-report-list { display: flex; flex-direction: column; gap: 8px; }
+        .item-report {
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 8px;
+            padding: 10px 12px;
+            background: rgba(255,255,255,.025);
+        }
+        .item-report-head {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 10px;
+        }
+        .item-title {
+            font-size: .86rem; font-weight: 700; color: var(--text);
+            line-height: 1.35;
+        }
+        .item-meta {
+            display: flex; flex-wrap: wrap; gap: 6px 10px;
+            margin-top: 5px;
+            font-size: .74rem; color: var(--muted);
+        }
+        .item-link {
+            font-size: .74rem; color: #818cf8; text-decoration: none;
+            white-space: nowrap; flex-shrink: 0;
+        }
+        .item-link:hover { text-decoration: underline; }
+        .item-chip {
+            display: inline-flex; align-items: center;
+            padding: 2px 7px; border-radius: 999px;
+            font-size: .7rem; font-weight: 700;
+            border: 1px solid transparent;
+        }
+        .item-chip.ok { color: var(--success); background: rgba(34,197,94,.11); border-color: rgba(34,197,94,.18); }
+        .item-chip.fail { color: var(--danger); background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.18); }
+        .item-chip.info { color: #60a5fa; background: rgba(96,165,250,.1); border-color: rgba(96,165,250,.18); }
+        .item-chip.warn { color: var(--warning); background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.18); }
+        .item-reason {
+            margin-top: 7px;
+            font-size: .74rem; color: var(--warning);
+            line-height: 1.35;
+        }
+        .item-report.retryable {
+            border-color: rgba(245,158,11,.28);
+            background: rgba(245,158,11,.045);
+        }
+        .item-detail-note {
+            margin-top: 5px;
+            font-size: .72rem;
+            color: #93c5fd;
+            line-height: 1.35;
+        }
+        .retry-queue {
+            margin-top: 12px;
+            padding: 10px 12px;
+            border: 1px solid rgba(245,158,11,.24);
+            border-radius: 8px;
+            background: rgba(245,158,11,.045);
+            font-size: .76rem;
+        }
+        .retry-queue-title {
+            color: var(--warning);
+            font-weight: 800;
+            margin-bottom: 7px;
+        }
+        .retry-queue-item {
+            padding: 6px 0;
+            border-top: 1px solid rgba(255,255,255,.06);
+        }
+        .retry-queue-item:first-of-type { border-top: 0; }
+
+        /* ── 컨트롤 버튼 그룹 ── */
+        .ctrl-group {
+            display: flex; gap: 8px; flex-wrap: wrap;
+            padding: 16px 0 4px;
+        }
+
+        /* ── 스피너 ── */
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spin { animation: spin 1s linear infinite; display: inline-block; }
+
+        /* ── 토스트 ── */
+        .toast {
+            position: fixed; bottom: 24px; right: 24px;
+            background: var(--card); border: 1px solid var(--border);
+            color: var(--text); padding: 11px 20px;
+            border-radius: 10px; font-size: .9rem; font-weight: 600;
+            opacity: 0; transform: translateY(8px);
+            transition: all .3s; pointer-events: none; z-index: 200;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.ok { border-color: var(--success); color: var(--success); }
+        .toast.err { border-color: var(--danger); color: var(--danger); }
+
+        /* ── 배치 목록 ── */
+        .batch-list-row {
+            display: flex; align-items: center; gap: 14px;
+            padding: 12px 16px;
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: 10px; margin-bottom: 8px;
+            cursor: pointer; text-decoration: none; color: inherit;
+            transition: border-color .2s;
+        }
+        .batch-list-row:hover { border-color: var(--primary); }
+        .bl-info { flex: 1; min-width: 0; }
+        .bl-name { font-size: .92rem; font-weight: 600; }
+        .bl-meta { font-size: .76rem; color: var(--muted); margin-top: 3px; }
+    </style>
+</head>
+<body>
+
+    <!-- 헤더 -->
+    <header class="page-header">
+        <a href="/" class="back-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            홈
+        </a>
+        <div>
+            <h1>🗂️ 배치 자동화</h1>
+            <span>다중 키워드 순차 수집 · 자동 중복 제거 · 상세 보고서</span>
+        </div>
+    </header>
+
+    <!-- 탭 -->
+    <nav class="tab-nav" id="tabNav">
+        <button class="tab-btn active" id="tabSetup"   onclick="switchTab('setup')">① 설정</button>
+        <button class="tab-btn"        id="tabProgress" onclick="switchTab('progress')">② 진행</button>
+        <button class="tab-btn"        id="tabReport"   onclick="switchTab('report')">③ 보고서</button>
+        <button class="tab-btn"        id="tabHistory"  onclick="switchTab('history')">📋 이전 배치</button>
+    </nav>
+
+    <!-- ─────────────── ① 설정 패널 ─────────────── -->
+    <section class="panel active" id="panelSetup">
+        <form id="batchForm" onsubmit="submitBatch(event)">
+
+            <!-- 기본 정보 -->
+            <div class="card">
+                <div class="card-title">📦 제품 정보</div>
+                <div class="row-2">
+                    <div class="field-row">
+                        <div class="field-label">업체명</div>
+                        <input type="text" name="company_name" class="field-input" placeholder="예: 우성보자기">
+                    </div>
+                    <div class="field-row">
+                        <div class="field-label">제품 종류</div>
+                        <input type="text" name="product_type" class="field-input" placeholder="예: 보자기, 목걸이">
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field-label">제품명 <span style="color:var(--danger)">*</span></div>
+                    <input type="text" name="product_name" id="productName" class="field-input"
+                        placeholder="예: 나전칠기 보자기" required>
+                </div>
+                <div class="field-row" style="margin-bottom:0;">
+                    <div class="field-label">제품 대표 이미지 (선택)</div>
+                    <div class="drop-zone" id="dropZone">
+                        <input type="file" id="batchImgFile" accept="image/*">
+                        <div class="drop-hint">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <rect x="3" y="3" width="18" height="18" rx="3"/>
+                                <circle cx="8.5" cy="8.5" r="1.5"/>
+                                <polyline points="21 15 16 10 5 21"/>
+                            </svg>
+                            <span style="font-size:.88rem;">이미지를 끌어다 놓거나 클릭</span>
+                        </div>
+                        <div id="imgPreview">
+                            <img id="prevImg" src="" alt="">
+                            <button type="button" onclick="clearImg()"
+                                style="font-size:.8rem;color:var(--primary);background:none;border:none;cursor:pointer;">
+                                이미지 변경
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 키워드 큐 -->
+            <div class="card">
+                <div class="card-title">🔑 검색 키워드 큐 (순서대로 실행됩니다)</div>
+                <table class="kw-table">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;">순번</th>
+                            <th>키워드</th>
+                            <th style="width:140px;">자동 선택 기준</th>
+                            <th style="width:40px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="kwBody">
+                        <!-- JS로 렌더링 -->
+                    </tbody>
+                </table>
+                <button type="button" class="btn-add-kw" onclick="addKeyword()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    키워드 추가
+                </button>
+
+                <div style="margin-top:16px; padding:12px 14px; background:rgba(99,102,241,.07);
+                    border:1px solid rgba(99,102,241,.2); border-radius:8px;">
+                    <div style="font-size:.8rem; color:#818cf8; font-weight:600; margin-bottom:6px;">💡 자동 선택 기준 안내</div>
+                    <div style="font-size:.76rem; color:var(--muted); line-height:1.7;">
+                        <strong style="color:var(--text);">전체</strong> — 중복 제외 후 모든 후보 캡처<br>
+                        <strong style="color:var(--text);">상위 N개</strong> — 유사도 높은 순 N개만 캡처 (권장: 상위 5개)<br>
+                        <strong style="color:var(--text);">점수 0.N 이상</strong> — 유사도 점수가 기준 이상인 것만 캡처
+                    </div>
+                </div>
+            </div>
+
+            <!-- 옵션 -->
+            <div class="card">
+                <div class="card-title">⚙️ 실행 옵션</div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">상세페이지 자동 캡처</div>
+                        <div class="setting-sub">키워드별 선택된 제품의 상세페이지를 자동으로 캡처합니다</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="optScrapeDetails" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">기본 자동 선택 기준</div>
+                        <div class="setting-sub">키워드별 설정이 없을 때 적용되는 기본값</div>
+                    </div>
+                    <select id="optAutoSelect" class="kw-sel">
+                        <option value="all">전체</option>
+                        <option value="top3">상위 3개</option>
+                        <option value="top5" selected>상위 5개</option>
+                        <option value="top10">상위 10개</option>
+                        <option value="score0.6">점수 0.6 이상</option>
+                        <option value="score0.7">점수 0.7 이상</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 출력 설정 -->
+            <div class="card">
+                <div class="card-title">📁 이미지 저장 위치</div>
+
+                <!-- 기본 저장 경로 안내 -->
+                <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.8rem;color:var(--muted);">
+                    🗂️ 기본 저장: <code style="color:#a5b4fc;">data/detail_pages/{product_id}/</code> (항상 저장됨)
+                </div>
+
+                <!-- GDrive 업로드 -->
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">☁️ Google Drive 업로드</div>
+                        <div class="setting-sub">캡처 완료 후 Google Drive에도 업로드 (설정 탭의 GDrive 폴더 사용)</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="optOutputGdrive" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <!-- 로컬 폴더 추가 저장 -->
+                <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;width:100%;">
+                        <div>
+                            <div class="setting-label">💾 로컬 폴더 추가 저장</div>
+                            <div class="setting-sub">지정한 폴더에 키워드별 하위폴더로 이미지를 복사합니다</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="optOutputLocal" onchange="toggleLocalDir()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="localDirRow" style="width:100%;display:none;">
+                        <input type="text" id="optOutputLocalDir" placeholder="예: C:\Users\kua\Desktop\배치출력" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:.85rem;outline:none;" onfocus="this.style.borderColor='var(--primary)'" onblur="this.style.borderColor='var(--border)'">
+                        <div style="font-size:.75rem;color:var(--muted);margin-top:5px;">📌 키워드명 하위폴더 자동 생성: 지정경로 / {키워드} / 이미지파일</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 시작 버튼 -->
+            <div style="display:flex; gap:12px; justify-content:flex-end;">
+                <button type="submit" class="btn-primary" id="startBtn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    배치 시작
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <!-- ─────────────── ② 진행 패널 ─────────────── -->
+    <section class="panel" id="panelProgress">
+        <div class="card">
+            <div class="card-title" style="justify-content:space-between;">
+                <span>전체 진행 상황</span>
+                <span id="batchStatusBadge" class="status-badge badge-pending">대기</span>
+            </div>
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-fill" id="overallBar" style="width:0%"></div>
+            </div>
+            <div class="progress-label">
+                <span id="progressText">키워드 0 / 0 완료</span>
+                <span id="progressPct">0%</span>
+            </div>
+
+            <div class="ctrl-group">
+                <button class="btn-success" id="btnStart" onclick="ctrlBatch('start')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    시작
+                </button>
+                <button class="btn-warning" id="btnPause" onclick="ctrlBatch('pause')" style="display:none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                    일시정지
+                </button>
+                <button class="btn-success" id="btnResume" onclick="ctrlBatch('resume')" style="display:none;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    재개
+                </button>
+                <button class="btn-danger" id="btnCancel" onclick="ctrlBatch('cancel')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    취소
+                </button>
+            </div>
+        </div>
+
+        <!-- 현재 상태 메시지 -->
+        <div class="card" style="padding:16px 20px;">
+            <div style="font-size:.78rem; color:var(--muted); margin-bottom:6px;">현재 진행</div>
+            <div id="liveStatusMsg" style="font-size:.9rem; color:#93c5fd; min-height:20px;">대기 중...</div>
+        </div>
+
+        <!-- 키워드별 진행 -->
+        <div class="card">
+            <div class="card-title">키워드별 진행</div>
+            <ul class="kw-progress-list" id="kwProgressList">
+                <!-- JS 렌더 -->
+            </ul>
+        </div>
+
+        <!-- 로그 -->
+        <div class="card">
+            <div class="card-title" style="justify-content:space-between;">
+                <span>실시간 로그</span>
+                <button onclick="clearLog()" style="background:none;border:none;color:var(--muted);font-size:.78rem;cursor:pointer;">지우기</button>
+            </div>
+            <div class="log-box" id="logBox"></div>
+        </div>
+    </section>
+
+    <!-- ─────────────── ③ 보고서 패널 ─────────────── -->
+    <section class="panel" id="panelReport">
+        <div class="card">
+            <div class="card-title">📊 배치 결과 요약</div>
+            <div class="summary-grid" id="summaryGrid">
+                <div class="summary-card"><div class="sc-val" id="s-kw">—</div><div class="sc-label">처리 키워드</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-sel">—</div><div class="sc-label">선택된 제품</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-scraped">—</div><div class="sc-label">캡처 성공</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-imgs">—</div><div class="sc-label">수집 이미지</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-dup" style="color:var(--warning);">—</div><div class="sc-label">중복 제외</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-retry" style="color:var(--warning);">—</div><div class="sc-label">재시도 큐</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-security" style="color:var(--danger);">—</div><div class="sc-label">보안 확인</div></div>
+                <div class="summary-card"><div class="sc-val" id="s-dur" style="font-size:1.2rem;">—</div><div class="sc-label">총 소요 시간</div></div>
+            </div>
+        </div>
+
+        <!-- 키워드별 상세 -->
+        <div class="card">
+            <div class="card-title">키워드별 상세 보고서</div>
+            <div id="kwReportList"><!-- JS 렌더 --></div>
+        </div>
+    </section>
+
+    <!-- ─────────────── 이전 배치 목록 ─────────────── -->
+    <section class="panel" id="panelHistory">
+        <div class="card">
+            <div class="card-title" style="justify-content:space-between;">
+                <span>이전 배치 작업 목록</span>
+                <button onclick="loadHistory()"
+                    style="background:none;border:none;color:var(--primary);font-size:.82rem;cursor:pointer;font-weight:600;">
+                    새로고침
+                </button>
+            </div>
+            <div id="historyList">불러오는 중...</div>
+        </div>
+    </section>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- Jinja2 변수만 담는 작은 스크립트 블록 -->
+    <script>
+    let currentBatchId = '{{ batch.batch_id if batch else "" }}';
+    const initBatch = {{ (batch | tojson) if batch else 'null' }};
+    </script>
+
+    {% raw %}
+    <script>
+    // ── 전역 상태 ──────────────────────────────────────────────────
+    let pollTimer = null;
+    let keywords = [];     // [{text, auto_select}, ...]
+
+    // 상태 → 아이콘/레이블 맵 (template literal 안에서 {{ }} 충돌 방지)
+    const STATUS_ICONS  = {pending:'⬜', running:'⏳', completed:'✅', failed:'❌', cancelled:'⚠️'};
+    const STATUS_LABELS = {pending:'대기', running:'진행 중', paused:'일시정지', completed:'완료', cancelled:'취소', failed:'실패'};
+
+    // ── 초기화 ──────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+        if (initBatch) {
+            // 기존 배치 → 진행/보고서 탭
+            currentBatchId = initBatch.batch_id;
+            populateSetupFromBatch(initBatch);
+            renderProgressFromBatch(initBatch);
+            if (['completed', 'cancelled', 'failed'].includes(initBatch.status)) {
+                renderReport(initBatch);
+                switchTab('report');
+            } else {
+                switchTab('progress');
+                startPolling();
+            }
+        } else {
+            // 새 배치 → 설정 탭, 기본 키워드 1개
+            addKeyword();
+        }
+    });
+
+    // ── 탭 전환 ────────────────────────────────────────────────────
+    function switchTab(tab) {
+        ['setup','progress','report','history'].forEach(t => {
+            document.getElementById('panel' + t[0].toUpperCase() + t.slice(1)).classList.remove('active');
+            document.getElementById('tab' + t[0].toUpperCase() + t.slice(1)).classList.remove('active');
+        });
+        document.getElementById('panel' + tab[0].toUpperCase() + tab.slice(1)).classList.add('active');
+        document.getElementById('tab'   + tab[0].toUpperCase() + tab.slice(1)).classList.add('active');
+        if (tab === 'history') loadHistory();
+    }
+
+    // ── 이미지 업로드 ───────────────────────────────────────────────
+    const dropZone = document.getElementById('dropZone');
+    const imgFile  = document.getElementById('batchImgFile');
+    imgFile.addEventListener('change', () => { if (imgFile.files[0]) showImg(imgFile.files[0]); });
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault(); dropZone.classList.remove('over');
+        const f = e.dataTransfer.files[0];
+        if (f && f.type.startsWith('image/')) {
+            const dt = new DataTransfer(); dt.items.add(f);
+            imgFile.files = dt.files; showImg(f);
+        }
+    });
+    function showImg(f) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            document.getElementById('prevImg').src = e.target.result;
+            document.getElementById('imgPreview').style.display = 'flex';
+            document.querySelector('#dropZone .drop-hint').style.display = 'none';
+        };
+        reader.readAsDataURL(f);
+    }
+    function clearImg() {
+        imgFile.value = '';
+        document.getElementById('imgPreview').style.display = 'none';
+        document.querySelector('#dropZone .drop-hint').style.display = 'flex';
+    }
+
+    // ── 키워드 관리 ─────────────────────────────────────────────────
+    function addKeyword(text = '', sel = '') {
+        keywords.push({ text: text || '', auto_select: sel || '' });
+        renderKeywords();
+    }
+    function removeKeyword(idx) {
+        keywords.splice(idx, 1);
+        renderKeywords();
+    }
+    function renderKeywords() {
+        const tbody = document.getElementById('kwBody');
+        const defSel = document.getElementById('optAutoSelect')?.value || 'top5';
+        tbody.innerHTML = keywords.map((kw, i) => `
+            <tr class="kw-row">
+                <td><span class="kw-num">${i + 1}</span></td>
+                <td>
+                    <input class="kw-input" type="text" placeholder="키워드 입력 (예: 보자기 전통)"
+                        value="${escapeHtml(kw.text)}"
+                        oninput="keywords[${i}].text = this.value"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();addKeyword();}">
+                </td>
+                <td>
+                    <select class="kw-sel" onchange="keywords[${i}].auto_select = this.value">
+                        ${['', 'all', 'top3', 'top5', 'top10', 'score0.6', 'score0.7'].map(v => {
+                            const labels = {
+                                '': `기본값 (${defSel})`,
+                                'all':'전체','top3':'상위 3개','top5':'상위 5개',
+                                'top10':'상위 10개','score0.6':'점수 0.6+','score0.7':'점수 0.7+'
+                            };
+                            const selected = (kw.auto_select || '') === v ? 'selected' : '';
+                            return `<option value="${v}" ${selected}>${labels[v]||v}</option>`;
+                        }).join('')}
+                    </select>
+                </td>
+                <td>
+                    <button class="btn-del" type="button" onclick="removeKeyword(${i})"
+                        ${keywords.length <= 1 ? 'disabled style="opacity:.3"' : ''}>✕</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+    function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    function detailStatusMeta(item) {
+        const status = String(item.status || 'unknown');
+        const ok = !!item.capture_success || Number(item.image_count || 0) > 0;
+        if (ok) return { label: '캡처 성공', cls: 'ok', group: 'success' };
+        const map = {
+            security_check_required: { label: '보안 확인 필요', cls: 'warn', group: 'security_check' },
+            captcha_blocked: { label: '보안 확인 차단', cls: 'warn', group: 'security_check' },
+            wrong_window: { label: '잘못된 창', cls: 'warn', group: 'wrong_window' },
+            scroll_stalled: { label: '스크롤 정체', cls: 'warn', group: 'scroll_stalled' },
+            bad_screenshot: { label: '캡처 품질 실패', cls: 'fail', group: 'bad_screenshot' },
+            login_required: { label: '로그인 필요', cls: 'warn', group: 'manual_required' },
+            incomplete_capture: { label: '불완전 캡처', cls: 'fail', group: 'normal_failure' },
+            empty_or_blocked: { label: '빈 캡처/차단', cls: 'fail', group: 'normal_failure' },
+            failed: { label: '캡처 실패', cls: 'fail', group: 'normal_failure' },
+            unknown: { label: '대기/미수집', cls: 'warn', group: 'unknown' },
+        };
+        const meta = map[status] || { label: item.status_label || status, cls: 'fail', group: item.failure_group || 'normal_failure' };
+        if (item.status_label) meta.label = item.status_label;
+        return meta;
+    }
+
+    function renderDetailDiagnostics(item) {
+        const d = item.diagnostics || {};
+        const bits = [
+            item.target_title ? `창 제목: ${item.target_title}` : '',
+            d.scroll_driver ? `스크롤: ${d.scroll_driver}` : '',
+            d.scroll_count_limit ? `시도 ${d.scroll_count_limit}회` : '',
+            d.gmarket_expected_scrolls ? `G마켓 예상 ${d.gmarket_expected_scrolls}회` : '',
+            d.auction_expected_scrolls ? `옥션 예상 ${d.auction_expected_scrolls}회` : '',
+            d.unique_frames ? `고유 프레임 ${d.unique_frames}` : ''
+        ].filter(Boolean);
+        return bits.length
+            ? `<div class="item-detail-note">${bits.map(escapeHtml).join(' · ')}</div>`
+            : '';
+    }
+
+    function renderRetryQueueList(items) {
+        const list = (items || []).filter(Boolean);
+        if (!list.length) return '';
+        return `
+            <div class="retry-queue">
+                <div class="retry-queue-title">재시도 큐 ${list.length}개</div>
+                ${list.map(item => `
+                    <div class="retry-queue-item">
+                        <div style="font-weight:700;color:var(--text);">${escapeHtml(item.title || item.product_id || '(제목 없음)')}</div>
+                        <div style="color:var(--muted);margin-top:2px;">
+                            ${[item.platform, item.seller_name, item.status_label || item.status].filter(Boolean).map(escapeHtml).join(' · ')}
+                        </div>
+                        ${(item.reason || item.target_title) ? `<div style="color:var(--warning);margin-top:3px;">${escapeHtml(item.reason || item.target_title)}</div>` : ''}
+                    </div>
+                `).join('')}
+            </div>`;
+    }
+
+    // ── 배치 제출 ────────────────────────────────────────────────────
+    async function submitBatch(e) {
+        e.preventDefault();
+        const form = document.getElementById('batchForm');
+        const productName = document.getElementById('productName').value.trim();
+        if (!productName) { showToast('제품명을 입력해주세요', 'err'); return; }
+
+        const validKws = keywords.filter(k => k.text.trim());
+        if (!validKws.length) { showToast('키워드를 하나 이상 입력해주세요', 'err'); return; }
+
+        const fd = new FormData();
+        fd.append('company_name', form.querySelector('[name=company_name]').value.trim());
+        fd.append('product_name', productName);
+        fd.append('product_type', form.querySelector('[name=product_type]').value.trim());
+        fd.append('keywords', JSON.stringify(validKws.map(k => ({
+            text: k.text.trim(),
+            auto_select: k.auto_select || document.getElementById('optAutoSelect').value
+        }))));
+        fd.append('auto_select', document.getElementById('optAutoSelect').value);
+        fd.append('scrape_details', document.getElementById('optScrapeDetails').checked ? '1' : '0');
+        fd.append('output_gdrive', document.getElementById('optOutputGdrive').checked ? '1' : '0');
+        const localDir = document.getElementById('optOutputLocal').checked
+            ? document.getElementById('optOutputLocalDir').value.trim() : '';
+        fd.append('output_local_dir', localDir);
+
+        const imgF = document.getElementById('batchImgFile');
+        if (imgF.files[0]) fd.append('image', imgF.files[0]);
+
+        const btn = document.getElementById('startBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spin">⏳</span> 생성 중...';
+
+        try {
+            const res = await fetch('/api/batch', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (!res.ok) { showToast(data.error || '오류 발생', 'err'); btn.disabled = false; btn.textContent='배치 시작'; return; }
+            currentBatchId = data.batch_id;
+            // 페이지 URL 변경
+            history.pushState({}, '', `/batch/${currentBatchId}`);
+            // 진행 탭으로 전환
+            switchTab('progress');
+            renderProgressFromBatch({ keyword_reports: validKws.map((k,i)=>({idx:i,keyword:k.text,status:'pending'})), status:'pending' });
+            // 자동 시작
+            await ctrlBatch('start');
+            startPolling();
+        } catch (err) {
+            showToast('서버 오류: ' + err.message, 'err');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg> 배치 시작';
+        }
+    }
+
+    // ── 배치 제어 ─────────────────────────────────────────────────────
+    async function ctrlBatch(action) {
+        if (!currentBatchId) return;
+        try {
+            const res = await fetch(`/api/batch/${currentBatchId}/${action}`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) { showToast(data.error || action + ' 실패', 'err'); return; }
+            updateCtrlButtons(data.status || action);
+        } catch(e) {
+            showToast('서버 오류', 'err');
+        }
+    }
+    function updateCtrlButtons(status) {
+        document.getElementById('btnStart').style.display  = ['pending'].includes(status) ? '' : 'none';
+        document.getElementById('btnPause').style.display  = status === 'running'  ? '' : 'none';
+        document.getElementById('btnResume').style.display = status === 'paused'   ? '' : 'none';
+        document.getElementById('btnCancel').style.display = ['running','paused','pending'].includes(status) ? '' : 'none';
+    }
+
+    // ── 폴링 ──────────────────────────────────────────────────────────
+    function startPolling() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(pollStatus, 1800);
+        pollStatus();
+    }
+    async function pollStatus() {
+        if (!currentBatchId) return;
+        try {
+            const res = await fetch(`/api/batch/${currentBatchId}/status`);
+            if (!res.ok) return;
+            const data = await res.json();
+            applyBatchStatus(data);
+        } catch(e) {}
+    }
+    function applyBatchStatus(data) {
+        // 진행 바
+        const total = data.keyword_reports?.length || 0;
+        const done  = data.keyword_reports?.filter(r => ['completed','failed','cancelled'].includes(r.status)).length || 0;
+        const pct   = total ? Math.round(done / total * 100) : 0;
+        document.getElementById('overallBar').style.width = pct + '%';
+        document.getElementById('progressText').textContent = `키워드 ${done} / ${total} 완료`;
+        document.getElementById('progressPct').textContent  = pct + '%';
+
+        // 상태 배지
+        const badgeEl = document.getElementById('batchStatusBadge');
+        const statusLabel = { pending:'대기', running:'진행 중', paused:'일시정지', completed:'완료', cancelled:'취소', failed:'실패' };
+        badgeEl.className = `status-badge badge-${data.status}`;
+        badgeEl.textContent = statusLabel[data.status] || data.status;
+
+        // 키워드 진행 리스트
+        renderKwProgressList(data.keyword_reports || []);
+
+        // 라이브 상태
+        const liveEl = document.getElementById('liveStatusMsg');
+        if (data.log?.length) {
+            liveEl.textContent = data.log[data.log.length - 1].replace(/^\[\d\d:\d\d:\d\d\] /, '');
+        }
+
+        // 로그 업데이트
+        renderLog(data.log || []);
+
+        // 버튼 업데이트
+        updateCtrlButtons(data.status);
+
+        // 완료 시 보고서 탭으로 자동 전환 + 알림
+        if (['completed','cancelled'].includes(data.status)) {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            renderReport(data);
+            if (!_batchFinishedNotified) {
+                _batchFinishedNotified = true;
+                const or = data.overall_report || {};
+                if (data.status === 'completed') {
+                    showToast(`✅ 배치 완료 — ${or.completed_keywords||0}개 키워드 · 이미지 ${or.total_images||0}장`, 'ok');
+                } else {
+                    showToast('⚠️ 배치 취소됨', '');
+                }
+                setTimeout(() => switchTab('report'), 1200);
+            }
+        }
+    }
+    let _batchFinishedNotified = false;
+
+    function renderKwProgressList(reports) {
+        const ul = document.getElementById('kwProgressList');
+        const icons = { pending:'⬜', running:'⏳', completed:'✅', failed:'❌', cancelled:'⚠️' };
+        ul.innerHTML = reports.map(r => {
+            const durText = r.duration_sec ? ` · ${Math.round(r.duration_sec)}초` : '';
+            const retryText = r.detail_retryable ? ` / 재시도 ${r.detail_retryable}개` : '';
+            const statsText = r.status === 'completed'
+                ? `후보 ${r.candidates_found}개 / 선택 ${r.candidates_auto_selected}개 / 이미지 ${r.images_collected}장${retryText}${durText}`
+                : r.status === 'running' ? '진행 중...'
+                : r.status === 'failed'  ? `오류: ${(r.error||'').slice(0,50)}`
+                : '';
+            const reviewLink = r.session_id
+                ? `<a class="kw-link" href="/review/${r.session_id}" target="_blank">검색 결과 보기 →</a>`
+                : '';
+            const dupBadge = r.duplicates?.length
+                ? `<span class="kw-dup-badge">중복 ${r.duplicates.length}개 제외</span>`
+                : '';
+            return `
+            <li class="kw-progress-item ${r.status === 'running' ? 'active' : (r.status === 'completed' ? 'done' : (r.status === 'failed' ? 'failed' : ''))}">
+                <div class="kw-icon ${r.status}">${icons[r.status] || '❓'}</div>
+                <div class="kw-meta">
+                    <div class="kw-name">${escapeHtml(r.keyword)}</div>
+                    ${statsText ? `<div class="kw-stats">${statsText}</div>` : ''}
+                </div>
+                ${dupBadge}
+                ${reviewLink}
+            </li>`;
+        }).join('');
+    }
+
+    let _lastLogLen = 0;
+    function renderLog(entries) {
+        if (entries.length === _lastLogLen) return;
+        _lastLogLen = entries.length;
+        const box = document.getElementById('logBox');
+        box.innerHTML = entries.map(e => {
+            let cls = '';
+            if (/✅|완료/.test(e)) cls = 'ok';
+            else if (/❌|실패|오류/.test(e)) cls = 'err';
+            else if (/⏸|🛑/.test(e)) cls = 'warn';
+            else if (entries.indexOf(e) === entries.length - 1) cls = 'cur';
+            return `<div class="l ${cls}">${escapeHtml(e)}</div>`;
+        }).join('');
+        box.scrollTop = box.scrollHeight;
+    }
+    function clearLog() { document.getElementById('logBox').innerHTML = ''; _lastLogLen = 0; }
+
+    function renderDetailItemList(items) {
+        const list = (items || []).filter(Boolean);
+        if (!list.length) return '';
+        return `
+            <div class="item-report-section">
+                <div class="item-report-title">항목별 수집 결과</div>
+                <div class="item-report-list">
+                    ${list.map(item => {
+                        const ok = !!item.capture_success || Number(item.image_count || 0) > 0;
+                        const statusMeta = detailStatusMeta(item);
+                        const statusText = statusMeta.label;
+                        const statusClass = statusMeta.cls;
+                        const imageCount = Number(item.image_count || 0);
+                        const sizeKb = Number(item.total_size_kb || 0);
+                        const score = Number(item.score || 0);
+                        const meta = [
+                            item.platform ? escapeHtml(item.platform) : '',
+                            item.seller_name ? `업체 ${escapeHtml(item.seller_name)}` : '',
+                            item.price ? escapeHtml(item.price) : '',
+                            score ? `유사도 ${score.toFixed(1)}` : '',
+                            imageCount ? `이미지 ${imageCount}장` : '이미지 0장',
+                            sizeKb ? `${sizeKb.toLocaleString()}KB` : '',
+                            item.method ? escapeHtml(item.method) : ''
+                        ].filter(Boolean).map(v => `<span>${v}</span>`).join('');
+                        const chips = [
+                            `<span class="item-chip ${statusClass}">${statusText}</span>`,
+                            item.retryable ? '<span class="item-chip warn">재시도 큐</span>' : '',
+                            item.from_cache ? '<span class="item-chip info">캐시</span>' : '',
+                            item.small_capture ? '<span class="item-chip warn">소형 캡처</span>' : ''
+                        ].filter(Boolean).join('');
+                        const reason = item.reason
+                            ? `<div class="item-reason">${escapeHtml(String(item.reason).slice(0, 140))}</div>`
+                            : '';
+                        const link = item.product_url
+                            ? `<a class="item-link" href="${escapeHtml(item.product_url)}" target="_blank">상품 열기 →</a>`
+                            : '';
+                        const action = item.retry_reason
+                            ? `<div class="item-detail-note">${escapeHtml(item.retry_reason)}</div>`
+                            : '';
+                        const diagnostics = renderDetailDiagnostics(item);
+                        return `
+                            <div class="item-report ${item.retryable ? 'retryable' : ''}">
+                                <div class="item-report-head">
+                                    <div style="min-width:0;flex:1;">
+                                        <div class="item-title">${escapeHtml(item.title || '(제목 없음)')}</div>
+                                        <div class="item-meta">${meta}</div>
+                                    </div>
+                                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+                                        ${chips}
+                                        ${link}
+                                    </div>
+                                </div>
+                                ${reason}
+                                ${action}
+                                ${diagnostics}
+                            </div>`;
+                    }).join('')}
+                </div>
+            </div>`;
+    }
+
+    // ── 보고서 렌더 ──────────────────────────────────────────────────
+    function renderReport(data) {
+        const or = data.overall_report || {};
+        const reports = data.keyword_reports || [];
+
+        document.getElementById('s-kw').textContent     = `${or.completed_keywords||0}/${or.total_keywords||reports.length}`;
+        document.getElementById('s-sel').textContent    = or.total_candidates_selected ?? '—';
+        document.getElementById('s-scraped').textContent= or.total_details_scraped ?? '—';
+        document.getElementById('s-imgs').textContent   = or.total_images ?? '—';
+        document.getElementById('s-dup').textContent    = or.total_duplicates_excluded ?? '—';
+        document.getElementById('s-retry').textContent  = or.total_retryable_details ?? 0;
+        document.getElementById('s-security').textContent = or.total_security_checks ?? 0;
+
+        // 소요시간 계산
+        if (data.started_at && data.ended_at) {
+            try {
+                const s = new Date(data.started_at.replace(' ','T'));
+                const e = new Date(data.ended_at.replace(' ','T'));
+                const sec = Math.round((e - s) / 1000);
+                document.getElementById('s-dur').textContent = sec >= 60
+                    ? `${Math.floor(sec/60)}분 ${sec%60}초`
+                    : sec + '초';
+            } catch(_) {}
+        }
+
+        // 키워드별 어코디언
+        const container = document.getElementById('kwReportList');
+        container.innerHTML = reports.map((r, i) => {
+            const itemHtml = renderDetailItemList(
+                (r.detail_items && r.detail_items.length) ? r.detail_items : (r.selected_items || [])
+            );
+            const counts = r.detail_status_counts || {};
+            const statusRows = [
+                ['보안 확인 필요', Number(counts.security_check_required || 0) + Number(counts.captcha_blocked || 0), 'var(--danger)'],
+                ['잘못된 창', Number(counts.wrong_window || 0), 'var(--warning)'],
+                ['스크롤 정체', Number(counts.scroll_stalled || 0), 'var(--warning)'],
+                ['캡처 품질 실패', Number(counts.bad_screenshot || 0), 'var(--danger)']
+            ].filter(row => row[1] > 0).map(row =>
+                `<div class="stat-row"><span>${row[0]}</span><span class="sv" style="color:${row[2]}">${row[1]}개</span></div>`
+            ).join('');
+            const retryHtml = renderRetryQueueList(r.retry_queue || []);
+            const dupHtml = (r.duplicates||[]).map(d =>
+                `<div class="dup-item">
+                    <div class="dt">${escapeHtml(d.title)} <span style="color:var(--muted);">[${d.platform}]</span></div>
+                    <div class="dr">⚠️ ${escapeHtml(d.reason)}</div>
+                </div>`
+            ).join('');
+
+            const statusColor = { completed:'var(--success)', failed:'var(--danger)', cancelled:'var(--warning)', running:'#818cf8' };
+            const statusLabel = { pending:'대기', running:'진행 중', completed:'완료', failed:'실패', cancelled:'취소' };
+
+            return `
+            <div class="kw-accord">
+                <button class="kw-accord-head" onclick="toggleAccord('acc${i}')">
+                    <span style="font-size:.85rem;color:${statusColor[r.status]||'var(--muted)'}">
+                        ${STATUS_ICONS[r.status]||'?'}
+                    </span>
+                    <div style="flex:1;text-align:left;">
+                        <div style="font-weight:700;font-size:.92rem;">${escapeHtml(r.keyword)}</div>
+                        <div style="font-size:.74rem;color:var(--muted);">${statusLabel[r.status]||r.status}${r.duration_sec ? ' · ' + Math.round(r.duration_sec) + '초' : ''}</div>
+                    </div>
+                    ${r.session_id ? `<a href="/review/${r.session_id}" target="_blank" onclick="event.stopPropagation()" class="kw-link">검색 결과 →</a>` : ''}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="acc${i}Arrow">
+                        <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                </button>
+                <div class="kw-accord-body" id="acc${i}">
+                    <div class="kw-accord-inner">
+                        <div class="stat-row"><span>후보 발견</span><span class="sv">${r.candidates_found}</span></div>
+                        <div class="stat-row"><span>자동 선택 (기준: ${r.auto_select||'기본'})</span><span class="sv">${r.candidates_auto_selected}</span></div>
+                        <div class="stat-row"><span>중복 제외</span><span class="sv" style="color:var(--warning)">${(r.duplicates||[]).length}</span></div>
+                        <div class="stat-row"><span>상세 캡처 성공</span><span class="sv">${r.detail_success}</span></div>
+                        <div class="stat-row"><span>상세 캡처 실패</span><span class="sv" style="color:var(--danger)">${r.detail_failed}</span></div>
+                        ${(r.detail_retryable > 0) ? `<div class="stat-row"><span>재시도 큐</span><span class="sv" style="color:var(--warning)">${r.detail_retryable}개</span></div>` : ''}
+                        ${statusRows}
+                        ${(r.detail_cached > 0) ? `<div class="stat-row"><span>💾 캐시 재사용</span><span class="sv" style="color:#60a5fa">${r.detail_cached}개</span></div>` : ''}
+                        ${(r.detail_small > 0) ? `<div class="stat-row"><span>⚠️ 봇탐지 의심 캡처</span><span class="sv" style="color:var(--warning)">${r.detail_small}개 <span style="font-size:.75rem;opacity:.7">(200KB 미만)</span></span></div>` : ''}
+                        <div class="stat-row"><span>수집 이미지</span><span class="sv">${r.images_collected}</span></div>
+                        ${r.error ? `<div class="stat-row"><span>오류</span><span style="color:var(--danger);font-size:.82rem;">${escapeHtml(r.error.slice(0,120))}</span></div>` : ''}
+                        ${retryHtml}
+                        ${itemHtml}
+                        ${dupHtml ? `<div style="margin-top:10px;"><div style="font-size:.78rem;color:var(--warning);font-weight:600;margin-bottom:6px;">중복 제외 목록</div><div class="dup-list">${dupHtml}</div></div>` : ''}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function toggleAccord(id) {
+        const body  = document.getElementById(id);
+        const arrow = document.getElementById(id + 'Arrow');
+        const isOpen = body.classList.toggle('open');
+        if (arrow) arrow.style.transform = isOpen ? 'rotate(180deg)' : '';
+    }
+
+    // ── 기존 배치에서 설정 탭 채우기 ──────────────────────────────────
+    function populateSetupFromBatch(batch) {
+        document.querySelector('[name=company_name]').value = batch.company_name || '';
+        document.querySelector('[name=product_name]').value = batch.product_name || '';
+        document.getElementById('productName').value = batch.product_name || '';
+        document.querySelector('[name=product_type]').value = batch.product_type || '';
+        keywords = (batch.keywords || []).map(k => typeof k === 'string' ? {text:k,auto_select:''} : k);
+        renderKeywords();
+        document.getElementById('optAutoSelect').value = batch.auto_select || 'top5';
+        document.getElementById('optScrapeDetails').checked = batch.scrape_details !== false;
+        document.getElementById('optOutputGdrive').checked = !!batch.output_gdrive;
+        const hasLocal = !!(batch.output_local_dir);
+        document.getElementById('optOutputLocal').checked = hasLocal;
+        document.getElementById('localDirRow').style.display = hasLocal ? '' : 'none';
+        document.getElementById('optOutputLocalDir').value = batch.output_local_dir || '';
+    }
+
+    function renderProgressFromBatch(batch) {
+        renderKwProgressList(batch.keyword_reports || []);
+        const status = batch.status || 'pending';
+        const badgeEl = document.getElementById('batchStatusBadge');
+        const statusLabel = { pending:'대기', running:'진행 중', paused:'일시정지', completed:'완료', cancelled:'취소', failed:'실패' };
+        badgeEl.className = `status-badge badge-${status}`;
+        badgeEl.textContent = statusLabel[status] || status;
+        updateCtrlButtons(status);
+    }
+
+    // ── 히스토리 ─────────────────────────────────────────────────────
+    async function loadHistory() {
+        const container = document.getElementById('historyList');
+        container.innerHTML = '<div style="color:var(--muted);font-size:.88rem;">불러오는 중...</div>';
+        try {
+            const res = await fetch('/api/batch');
+            const data = await res.json();
+            const batches = data.batches || [];
+            if (!batches.length) {
+                container.innerHTML = '<div style="color:var(--muted);font-size:.88rem;">이전 배치 작업이 없습니다.</div>';
+                return;
+            }
+            container.innerHTML = batches.map(b => {
+                const kw_done = (b.keyword_reports||[]).filter(r=>r.status==='completed').length;
+                const kw_total = (b.keyword_reports||[]).length;
+                const imgs = b.overall_report?.total_images ?? '?';
+                const statusLabel = { pending:'대기', running:'진행 중', paused:'일시정지', completed:'완료', cancelled:'취소', failed:'실패' };
+                return `
+                <a class="batch-list-row" href="/batch/${b.batch_id}">
+                    <span class="status-badge badge-${b.status}" style="flex-shrink:0;">${statusLabel[b.status]||b.status}</span>
+                    <div class="bl-info">
+                        <div class="bl-name">${escapeHtml(b.product_name)}${b.company_name ? ' — '+escapeHtml(b.company_name) : ''}</div>
+                        <div class="bl-meta">${kw_done}/${kw_total}개 완료 · 이미지 ${imgs}장 · ${b.created_at||''}</div>
+                    </div>
+                </a>`;
+            }).join('');
+        } catch(e) {
+            container.innerHTML = '<div style="color:var(--danger);font-size:.88rem;">불러오기 실패</div>';
+        }
+    }
+
+    // ── 로컬 폴더 토글 ───────────────────────────────────────────────
+    function toggleLocalDir() {
+        const on = document.getElementById('optOutputLocal').checked;
+        document.getElementById('localDirRow').style.display = on ? '' : 'none';
+    }
+
+    // ── 유틸 ─────────────────────────────────────────────────────────
+    function showToast(msg, type = '') {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = 'toast show' + (type ? ' ' + type : '');
+        setTimeout(() => t.classList.remove('show'), 2800);
+    }
+    </script>
+    {% endraw %}
+</body>
+</html>

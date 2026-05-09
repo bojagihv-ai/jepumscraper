@@ -276,7 +276,14 @@ def _calc_score(attempts: int, successes: int, consecutive_failures: int, avg_ms
 
 def _update_platform_state(platform: str, success: bool, status: str) -> None:
     platform = normalize_platform(platform)
-    neutral_statuses = {"zero_result", "manual_required", "manual_wait"}
+    neutral_statuses = {
+        "zero_result",
+        "manual_required",
+        "manual_wait",
+        "wrong_window",
+        "scroll_stalled",
+        "bad_screenshot",
+    }
     with _connect() as conn:
         row = conn.execute(
             "SELECT * FROM platform_state WHERE platform = ?",
@@ -289,7 +296,7 @@ def _update_platform_state(platform: str, success: bool, status: str) -> None:
         else:
             failures += 1
             cooldown_until = row["cooldown_until"] if row else None
-            severe = status in {"blocked", "captcha", "login_required", "throttled", "timeout"}
+            severe = status in {"blocked", "login_required", "throttled", "timeout"}
             if severe or failures >= 3:
                 minutes = min(45, 5 * failures)
                 cooldown_until = (_now() + timedelta(minutes=minutes)).isoformat(timespec="seconds")

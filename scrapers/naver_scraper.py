@@ -48,6 +48,7 @@ class NaverScraper(BaseScraper):
                             link = item.get('link', '')
                             image = item.get('image', '')
                             product_id = item.get('productId', str(i))
+                            seller_name = item.get('mallName', '') or 'Naver'
                             
                             pid = f"naver_{product_id}"
                             
@@ -61,7 +62,8 @@ class NaverScraper(BaseScraper):
                                     price=price,
                                     product_url=link,
                                     thumbnail_url=image,
-                                    local_thumbnail_path=local_thumb
+                                    local_thumbnail_path=local_thumb,
+                                    seller_name=seller_name,
                                 )
                                 results.append(result)
                     else:

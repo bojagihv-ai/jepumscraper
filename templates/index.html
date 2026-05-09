@@ -304,6 +304,46 @@
             background: var(--success);
         }
 
+        /* 전체 로그 */
+        .log-toggle-btn {
+            background: none;
+            border: none;
+            color: var(--muted);
+            font-size: 0.75rem;
+            cursor: pointer;
+            padding: 0 4px;
+            margin-left: auto;
+            white-space: nowrap;
+            flex-shrink: 0;
+            transition: color 0.15s;
+        }
+        .log-toggle-btn:hover { color: var(--text); }
+        .log-area {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.35s ease;
+        }
+        .log-area.open { max-height: 260px; overflow-y: auto; }
+        .log-list {
+            list-style: none;
+            padding: 8px 4px 4px 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .log-entry {
+            font-size: 0.76rem;
+            color: var(--muted);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'D2Coding', monospace;
+            line-height: 1.4;
+        }
+        .log-entry.ai    { color: #818cf8; background: rgba(99,102,241,0.07); }
+        .log-entry.ok    { color: var(--success); }
+        .log-entry.err   { color: var(--danger); }
+        .log-entry.cur   { color: var(--text); font-weight: 600; }
+
         @keyframes pulse {
 
             0%,
@@ -737,8 +777,8 @@
             </div>
 
             <!-- 검색 버튼 군 -->
-            <div style="display: flex; gap: 10px; margin-top: 20px;">
-                <button type="submit" class="btn-search" id="searchBtn" style="flex: 1;">
+            <div style="display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap;">
+                <button type="submit" class="btn-search" id="searchBtn" style="flex: 1; min-width: 160px;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <circle cx="11" cy="11" r="8" />
@@ -746,7 +786,7 @@
                     </svg>
                     즉시 검색 (단일)
                 </button>
-                <button type="button" class="btn-search" id="queueBtn" style="flex: 1; background: #22c55e;">
+                <button type="button" class="btn-search" id="queueBtn" style="flex: 1; min-width: 160px; background: #22c55e;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-width="2.5">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -754,8 +794,16 @@
                         <line x1="8" y1="2" x2="8" y2="6" />
                         <line x1="3" y1="10" x2="21" y2="10" />
                     </svg>
-                    자동 수집 예약 (다중/백그라운드)
+                    자동 수집 예약
                 </button>
+                <a href="/batch" class="btn-search" style="flex: 1; min-width: 160px; background: linear-gradient(135deg,#7c3aed,#6366f1); text-decoration: none; justify-content: center; display: flex; align-items: center; gap: 10px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <line x1="8" y1="21" x2="16" y2="21"/>
+                        <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                    🗂️ 배치 자동화
+                </a>
             </div>
 
             <!-- 자동 테스트 버튼 -->
@@ -804,8 +852,13 @@
                     </li>
                 </ul>
                 <div id="liveStatus"
-                    style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 8px; font-size: 0.85rem; color: #93c5fd; min-height: 22px; transition: all 0.3s;">
-                    <span id="liveStatusText">대기 중...</span>
+                    style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); border-radius: 8px; font-size: 0.85rem; color: #93c5fd; min-height: 22px; transition: all 0.3s; display:flex; align-items:center; gap:8px;">
+                    <span id="liveStatusText" style="flex:1;">대기 중...</span>
+                    <button class="log-toggle-btn" id="logToggleBtn" onclick="toggleLog()" title="전체 로그 펼치기">▼ 전체로그</button>
+                </div>
+                <!-- 전체 로그 펼치기 영역 -->
+                <div class="log-area" id="logArea">
+                    <ul class="log-list" id="logList"></ul>
                 </div>
             </div>
         </form>
@@ -898,6 +951,168 @@
                     <input type="range" id="sl_slice" min="0" max="10000" step="500" value="0"
                         oninput="document.getElementById('v_slice').textContent=this.value == 0 ? '단일(자르지않음)' : this.value + 'px'">
                     <span class="slider-val" id="v_slice">0</span>
+                </div>
+            </div>
+
+            <!-- AI 엔진 -->
+            <div class="settings-section">
+                <h3>🤖 AI 엔진 (검색어 최적화 / 후보 재랭킹)</h3>
+                <p style="font-size:0.8rem; color:#9ca3af; margin-bottom:12px; line-height:1.6;">
+                    이미지를 AI가 분석해 최적 검색어를 생성하거나, 후보 제품을 재랭킹합니다.<br>
+                    <span style="color:#86efac;">Ollama(로컬)</span> — Gemma4, LLaVA 등 GPU 로컬 모델 |
+                    <span style="color:#93c5fd;">OpenAI</span> — GPT-4o Vision |
+                    <span style="color:#fca5a5;">Gemini</span> — Gemini 2.0 Flash
+                </p>
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:14px; font-size:0.86rem; color:#d1d5db;">
+                    <input type="checkbox" id="ai_engine_enabled" style="accent-color:var(--primary);">
+                    AI 엔진 활성화
+                </label>
+
+                <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                    <label style="font-size:0.82rem; color:#9ca3af; display:flex; align-items:center; gap:6px;">
+                        <input type="radio" name="ai_engine_type" value="ollama" id="ai_type_ollama" style="accent-color:var(--primary);"> Ollama (로컬)
+                    </label>
+                    <label style="font-size:0.82rem; color:#9ca3af; display:flex; align-items:center; gap:6px;">
+                        <input type="radio" name="ai_engine_type" value="openai" id="ai_type_openai" style="accent-color:var(--primary);"> OpenAI GPT-4o
+                    </label>
+                    <label style="font-size:0.82rem; color:#9ca3af; display:flex; align-items:center; gap:6px;">
+                        <input type="radio" name="ai_engine_type" value="gemini" id="ai_type_gemini" style="accent-color:var(--primary);"> Google Gemini
+                    </label>
+                </div>
+
+                <div id="ai_ollama_section" style="margin-bottom:12px;">
+                    <label style="font-size:0.82rem; color:#9ca3af;">Ollama URL</label>
+                    <div style="display:flex; gap:6px; margin-top:4px;">
+                        <input type="text" id="ai_ollama_url" placeholder="http://localhost:11434"
+                            style="flex:1; padding:7px 10px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.85rem;">
+                        <button type="button" onclick="loadOllamaModels()"
+                            style="padding:7px 12px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.8rem; cursor:pointer; white-space:nowrap;">
+                            모델 불러오기
+                        </button>
+                    </div>
+                    <!-- 모델 선택 드롭다운 (Ollama 전용) -->
+                    <div style="margin-top:8px;">
+                        <label style="font-size:0.82rem; color:#9ca3af;">모델 선택</label>
+                        <select id="ai_model_select"
+                            style="width:100%; margin-top:4px; padding:7px 10px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.85rem;"
+                            onchange="document.getElementById('ai_model').value=this.value">
+                            <option value="">-- 모델 불러오기 버튼을 눌러주세요 --</option>
+                        </select>
+                        <span id="aiModelHint" style="font-size:0.75rem; color:#6b7280; margin-top:4px; display:block;"></span>
+                    </div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+                    <label style="font-size:0.82rem; color:#9ca3af;">모델명 (직접 입력 또는 위에서 선택)</label>
+                    <input type="text" id="ai_model" placeholder="gemma4-26b-iq4:latest"
+                        style="padding:7px 10px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.85rem;">
+                </div>
+                <div id="ai_openai_section" style="display:none; margin-bottom:12px;">
+                    <label style="font-size:0.82rem; color:#9ca3af;">OpenAI API Key</label>
+                    <input type="password" id="ai_openai_key" placeholder="sk-..."
+                        style="width:100%; margin-top:4px; padding:7px 10px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.85rem;">
+                </div>
+                <div id="ai_gemini_section" style="display:none; margin-bottom:12px;">
+                    <label style="font-size:0.82rem; color:#9ca3af;">Gemini API Key</label>
+                    <input type="password" id="ai_gemini_key" placeholder="AIza..."
+                        style="width:100%; margin-top:4px; padding:7px 10px; background:#1e293b; border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:0.85rem;">
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+                    <label style="display:flex; align-items:center; gap:8px; font-size:0.84rem; color:#d1d5db;">
+                        <input type="checkbox" id="ai_use_keywords" style="accent-color:var(--primary);"> 검색어 최적화 (검색 전 1회, 빠름)
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; font-size:0.84rem; color:#d1d5db;">
+                        <input type="checkbox" id="ai_use_ranking" style="accent-color:var(--primary);"> 후보 재랭킹 (후보당 LLM 호출, 느림)
+                    </label>
+                    <div style="display:flex; align-items:center; gap:8px; margin-left:20px;">
+                        <label style="font-size:0.8rem; color:#6b7280;">재랭킹 상위 N개:</label>
+                        <input type="number" id="ai_ranking_top_n" min="5" max="60" value="20"
+                            style="width:60px; padding:4px 6px; background:#1e293b; border:1px solid #334155; border-radius:5px; color:#f1f5f9; font-size:0.82rem;">
+                    </div>
+                </div>
+
+                <button type="button" onclick="checkAiEngine()"
+                    style="padding:7px 14px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.82rem; cursor:pointer;">
+                    연결 테스트
+                </button>
+                <span id="aiEngineStatus" style="margin-left:10px; font-size:0.8rem; color:#9ca3af;"></span>
+            </div>
+
+            <!-- CAPTCHA 자동 해결 -->
+            <div class="settings-section">
+                <h3>🤖 CAPTCHA 자동 해결 서비스</h3>
+                <p style="font-size:0.8rem; color:#9ca3af; margin-bottom:14px; line-height:1.6;">
+                    봇 차단 우회 시 reCAPTCHA / hCaptcha / Turnstile을 자동으로 해결합니다.<br>
+                    키가 여러 개 있으면 <span style="color:#86efac;">우선순위: NopeCHA → Capsolver → EzCaptcha → 2captcha → Anti-Captcha</span> 로 자동 선택되며,
+                    실패 시 다음 서비스로 폴백됩니다.
+                </p>
+                <div style="display:grid; gap:10px;">
+                    <!-- NopeCHA (무료 Discord 키) -->
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:0.82rem; color:#d1d5db; display:flex; align-items:center; gap:6px;">
+                            <span style="width:120px; flex-shrink:0; color:#86efac;">NopeCHA Key</span>
+                            <input type="password" id="nopecha_api_key" placeholder="Discord #free-key 채널에서 발급..."
+                                style="flex:1; background:#1a2035; border:1px solid #374151; border-radius:6px; padding:7px 10px; color:#e5e7eb; font-size:0.82rem;">
+                            <button type="button" onclick="checkCaptchaBalance('nopecha')"
+                                style="padding:6px 10px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.78rem; cursor:pointer; white-space:nowrap;">
+                                확인
+                            </button>
+                        </label>
+                        <span id="captchaBalanceNopecha" style="font-size:0.78rem; color:#9ca3af; margin-left:126px;">무료: Discord discord.gg/nopecha → #free-key → !nopecha (200크레딧/24h)</span>
+                    </div>
+                    <!-- EzCaptcha (가입 무료 크레딧) -->
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:0.82rem; color:#d1d5db; display:flex; align-items:center; gap:6px;">
+                            <span style="width:120px; flex-shrink:0; color:#86efac;">EzCaptcha Key</span>
+                            <input type="password" id="ezcaptcha_api_key" placeholder="ez-captcha.com 가입 후 발급..."
+                                style="flex:1; background:#1a2035; border:1px solid #374151; border-radius:6px; padding:7px 10px; color:#e5e7eb; font-size:0.82rem;">
+                            <button type="button" onclick="checkCaptchaBalance('ezcaptcha')"
+                                style="padding:6px 10px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.78rem; cursor:pointer; white-space:nowrap;">
+                                잔액 확인
+                            </button>
+                        </label>
+                        <span id="captchaBalanceEzcaptcha" style="font-size:0.78rem; color:#9ca3af; margin-left:126px;">무료: ez-captcha.com 가입 시 무료 크레딧 지급 (Anti-Captcha 호환)</span>
+                    </div>
+                    <!-- Capsolver -->
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:0.82rem; color:#d1d5db; display:flex; align-items:center; gap:6px;">
+                            <span style="width:120px; flex-shrink:0;">Capsolver API Key</span>
+                            <input type="password" id="capsolver_api_key" placeholder="CAP-XXXXXXXX..."
+                                style="flex:1; background:#1a2035; border:1px solid #374151; border-radius:6px; padding:7px 10px; color:#e5e7eb; font-size:0.82rem;">
+                            <button type="button" onclick="checkCaptchaBalance('capsolver')"
+                                style="padding:6px 10px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.78rem; cursor:pointer; white-space:nowrap;">
+                                잔액 확인
+                            </button>
+                        </label>
+                        <span id="captchaBalanceCapsolver" style="font-size:0.78rem; color:#9ca3af; margin-left:126px;"></span>
+                    </div>
+                    <!-- 2captcha -->
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:0.82rem; color:#d1d5db; display:flex; align-items:center; gap:6px;">
+                            <span style="width:120px; flex-shrink:0;">2captcha API Key</span>
+                            <input type="password" id="twocaptcha_api_key" placeholder="xxxxxxxxxxxxxxx..."
+                                style="flex:1; background:#1a2035; border:1px solid #374151; border-radius:6px; padding:7px 10px; color:#e5e7eb; font-size:0.82rem;">
+                            <button type="button" onclick="checkCaptchaBalance('2captcha')"
+                                style="padding:6px 10px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.78rem; cursor:pointer; white-space:nowrap;">
+                                잔액 확인
+                            </button>
+                        </label>
+                        <span id="captchaBalance2captcha" style="font-size:0.78rem; color:#9ca3af; margin-left:126px;"></span>
+                    </div>
+                    <!-- Anti-Captcha -->
+                    <div style="display:flex; flex-direction:column; gap:4px;">
+                        <label style="font-size:0.82rem; color:#d1d5db; display:flex; align-items:center; gap:6px;">
+                            <span style="width:120px; flex-shrink:0;">Anti-Captcha Key</span>
+                            <input type="password" id="anticaptcha_api_key" placeholder="xxxxxxxxxxxxxxx..."
+                                style="flex:1; background:#1a2035; border:1px solid #374151; border-radius:6px; padding:7px 10px; color:#e5e7eb; font-size:0.82rem;">
+                            <button type="button" onclick="checkCaptchaBalance('anticaptcha')"
+                                style="padding:6px 10px; background:#1e3a5f; border:1px solid #3b82f6; border-radius:6px; color:#93c5fd; font-size:0.78rem; cursor:pointer; white-space:nowrap;">
+                                잔액 확인
+                            </button>
+                        </label>
+                        <span id="captchaBalanceAnticaptcha" style="font-size:0.78rem; color:#9ca3af; margin-left:126px;"></span>
+                    </div>
                 </div>
             </div>
 
@@ -1050,6 +1265,124 @@
             const proxyJson = document.getElementById('proxy_profiles_json');
             if (proxyToggle) proxyToggle.checked = !!appSettings.enable_proxy_profiles;
             if (proxyJson) proxyJson.value = JSON.stringify(appSettings.proxy_profiles || [], null, 2);
+            // AI 엔진
+            const aiEnabled = document.getElementById('ai_engine_enabled');
+            if (aiEnabled) aiEnabled.checked = !!appSettings.ai_engine_enabled;
+            const aiType = appSettings.ai_engine_type || 'ollama';
+            const aiTypeEl = document.getElementById('ai_type_' + aiType);
+            if (aiTypeEl) aiTypeEl.checked = true;
+            updateAiEngineTypeSections(aiType);
+            document.querySelectorAll('input[name="ai_engine_type"]').forEach(r => {
+                r.onchange = () => updateAiEngineTypeSections(r.value);
+            });
+            const aiModel = document.getElementById('ai_model');
+            if (aiModel) aiModel.value = appSettings.ai_model || 'gemma4-26b-iq4:latest';
+            // Ollama 타입이면 모델 목록 자동 로드
+            if (aiType === 'ollama') loadOllamaModels();
+            const aiOllamaUrl = document.getElementById('ai_ollama_url');
+            if (aiOllamaUrl) aiOllamaUrl.value = appSettings.ai_ollama_url || 'http://localhost:11434';
+            const aiOpenaiKey = document.getElementById('ai_openai_key');
+            if (aiOpenaiKey) aiOpenaiKey.value = appSettings.ai_openai_key || '';
+            const aiGeminiKey = document.getElementById('ai_gemini_key');
+            if (aiGeminiKey) aiGeminiKey.value = appSettings.ai_gemini_key || '';
+            const aiUseKw = document.getElementById('ai_use_keywords');
+            if (aiUseKw) aiUseKw.checked = appSettings.ai_use_keywords !== false;
+            const aiUseRank = document.getElementById('ai_use_ranking');
+            if (aiUseRank) aiUseRank.checked = !!appSettings.ai_use_ranking;
+            const aiTopN = document.getElementById('ai_ranking_top_n');
+            if (aiTopN) aiTopN.value = appSettings.ai_ranking_top_n || 20;
+            // CAPTCHA 서비스 키
+            const ak = appSettings.api_keys || {};
+            ['nopecha_api_key', 'ezcaptcha_api_key', 'capsolver_api_key', 'twocaptcha_api_key', 'anticaptcha_api_key'].forEach(k => {
+                const el = document.getElementById(k);
+                if (el) el.value = ak[k] || '';
+            });
+        }
+
+        function updateAiEngineTypeSections(type) {
+            document.getElementById('ai_ollama_section').style.display = type === 'ollama' ? '' : 'none';
+            document.getElementById('ai_openai_section').style.display = type === 'openai' ? '' : 'none';
+            document.getElementById('ai_gemini_section').style.display = type === 'gemini' ? '' : 'none';
+            // Ollama가 아닐 때 모델 입력창 항상 표시
+            const modelRow = document.getElementById('ai_model').parentElement;
+            if (modelRow) modelRow.style.display = '';
+        }
+
+        async function loadOllamaModels() {
+            const urlEl = document.getElementById('ai_ollama_url');
+            const select = document.getElementById('ai_model_select');
+            const hint = document.getElementById('aiModelHint');
+            const currentModel = document.getElementById('ai_model').value;
+
+            hint.textContent = '불러오는 중...';
+            hint.style.color = '#9ca3af';
+            select.innerHTML = '<option value="">불러오는 중...</option>';
+
+            try {
+                // 현재 입력된 URL로 임시 설정 후 API 호출
+                const r = await fetch('/api/ai_engine/models');
+                const data = await r.json();
+                if (!data.ok || !data.models.length) {
+                    select.innerHTML = '<option value="">모델 없음 (Ollama 실행 확인)</option>';
+                    hint.textContent = data.message || 'Ollama 연결 실패';
+                    hint.style.color = '#fca5a5';
+                    return;
+                }
+                select.innerHTML = '';
+                let visionCount = 0;
+                for (const m of data.models) {
+                    const opt = document.createElement('option');
+                    opt.value = m.name;
+                    const sizeGB = (m.size / 1e9).toFixed(1);
+                    const visionTag = m.has_vision ? ' 📷' : '';
+                    const paramTag = m.param_size ? ` (${m.param_size})` : '';
+                    opt.textContent = `${m.name}${paramTag} · ${sizeGB}GB${visionTag}`;
+                    opt.dataset.hasVision = m.has_vision;
+                    if (m.name === currentModel) opt.selected = true;
+                    select.appendChild(opt);
+                    if (m.has_vision) visionCount++;
+                }
+                // 현재 모델이 목록에 없으면 첫 번째 비전 모델 선택
+                if (!currentModel || !data.models.find(m => m.name === currentModel)) {
+                    const firstVision = data.models.find(m => m.has_vision);
+                    if (firstVision) {
+                        select.value = firstVision.name;
+                        document.getElementById('ai_model').value = firstVision.name;
+                    }
+                } else {
+                    select.value = currentModel;
+                }
+                hint.textContent = `📷 이미지 분석 가능 모델 ${visionCount}개 | 총 ${data.models.length}개 설치됨`;
+                hint.style.color = '#86efac';
+
+                // 선택 시 ai_model 입력창 자동 동기화
+                select.onchange = () => {
+                    document.getElementById('ai_model').value = select.value;
+                    const sel = select.options[select.selectedIndex];
+                    const isVision = sel && sel.dataset.hasVision === 'true';
+                    hint.textContent = isVision ? '✅ 이미지 분석 지원 모델' : '⚠️ 이 모델은 이미지 분석 미지원 — 텍스트 기반 추론만 가능';
+                    hint.style.color = isVision ? '#86efac' : '#fbbf24';
+                };
+            } catch (e) {
+                select.innerHTML = '<option value="">불러오기 실패</option>';
+                hint.textContent = '서버 통신 오류: ' + e;
+                hint.style.color = '#fca5a5';
+            }
+        }
+
+        async function checkAiEngine() {
+            const statusEl = document.getElementById('aiEngineStatus');
+            statusEl.textContent = '연결 확인 중...';
+            statusEl.style.color = '#9ca3af';
+            try {
+                const r = await fetch('/api/ai_engine/status');
+                const data = await r.json();
+                statusEl.textContent = data.message || (data.ok ? '연결됨' : '연결 실패');
+                statusEl.style.color = data.ok ? '#86efac' : '#fca5a5';
+            } catch (e) {
+                statusEl.textContent = '서버 통신 실패';
+                statusEl.style.color = '#fca5a5';
+            }
         }
 
         async function loadEffectiveSettings() {
@@ -1099,6 +1432,11 @@
                     });
                 }
             }
+            // CAPTCHA 서비스 키
+            ['nopecha_api_key', 'ezcaptcha_api_key', 'capsolver_api_key', 'twocaptcha_api_key', 'anticaptcha_api_key'].forEach(k => {
+                const el = document.getElementById(k);
+                if (el) apiKeys[k] = el.value.trim();
+            });
             let proxyProfiles = [];
             try {
                 proxyProfiles = JSON.parse(document.getElementById('proxy_profiles_json').value || '[]');
@@ -1107,6 +1445,7 @@
                 showToast('프록시 JSON 형식이 올바르지 않습니다');
                 return;
             }
+            const aiTypeEl = document.querySelector('input[name="ai_engine_type"]:checked');
             const body = {
                 platforms: plats,
                 api_keys: apiKeys,
@@ -1123,6 +1462,16 @@
                 slice_height: parseInt(document.getElementById('sl_slice').value),
                 enable_proxy_profiles: document.getElementById('enable_proxy_profiles').checked,
                 proxy_profiles: proxyProfiles,
+                // AI 엔진
+                ai_engine_enabled: document.getElementById('ai_engine_enabled').checked,
+                ai_engine_type: aiTypeEl ? aiTypeEl.value : 'ollama',
+                ai_model: document.getElementById('ai_model').value.trim(),
+                ai_ollama_url: document.getElementById('ai_ollama_url').value.trim(),
+                ai_openai_key: document.getElementById('ai_openai_key').value.trim(),
+                ai_gemini_key: document.getElementById('ai_gemini_key').value.trim(),
+                ai_use_keywords: document.getElementById('ai_use_keywords').checked,
+                ai_use_ranking: document.getElementById('ai_use_ranking').checked,
+                ai_ranking_top_n: parseInt(document.getElementById('ai_ranking_top_n').value) || 20,
             };
             const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (r.ok) {
@@ -1133,6 +1482,42 @@
                 showToast('&#10003; 설정이 저장되었습니다');
             } else {
                 showToast('&#9888; 저장 실패');
+            }
+        }
+
+        async function checkCaptchaBalance(service) {
+            const idMap = {
+                'nopecha':    'captchaBalanceNopecha',
+                'ezcaptcha':  'captchaBalanceEzcaptcha',
+                'capsolver':  'captchaBalanceCapsolver',
+                '2captcha':   'captchaBalance2captcha',
+                'anticaptcha':'captchaBalanceAnticaptcha',
+            };
+            const el = document.getElementById(idMap[service]);
+            if (el) { el.textContent = '확인 중...'; el.style.color = '#9ca3af'; }
+            try {
+                const r = await fetch('/api/captcha/balance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ service })
+                });
+                const data = await r.json();
+                if (el) {
+                    if (data.ok) {
+                        const bal = data.balance;
+                        // NopeCHA는 크레딧 수 (정수), 나머지는 달러
+                        const display = (service === 'nopecha')
+                            ? `크레딧: ${bal}`
+                            : `잔액: $${parseFloat(bal).toFixed(4)}`;
+                        el.textContent = display;
+                        el.style.color = '#86efac';
+                    } else {
+                        el.textContent = data.error || '확인 실패 (API 키 미설정?)';
+                        el.style.color = '#fca5a5';
+                    }
+                }
+            } catch (e) {
+                if (el) { el.textContent = '네트워크 오류'; el.style.color = '#fca5a5'; }
             }
         }
 
@@ -1272,11 +1657,59 @@
             });
         }
 
+        // ── 전체 로그 ──────────────────────────────
+        let _logEntries = [];
+        let _logOpen = false;
+        let _lastLogText = '';
+
+        function toggleLog() {
+            _logOpen = !_logOpen;
+            const area = document.getElementById('logArea');
+            const btn  = document.getElementById('logToggleBtn');
+            area.classList.toggle('open', _logOpen);
+            btn.textContent = _logOpen ? '▲ 접기' : '▼ 전체로그';
+            if (_logOpen) area.scrollTop = area.scrollHeight;
+        }
+
+        function classifyLog(msg) {
+            if (/AI가|AI 검색어|AI 이미지|재평가|키워드 분석|최적화|재랭킹/i.test(msg)) return 'ai';
+            if (/✅|완료|성공/i.test(msg)) return 'ok';
+            if (/실패|오류|에러|Error/i.test(msg)) return 'err';
+            return '';
+        }
+
+        function appendLog(msg) {
+            if (!msg || msg === _lastLogText) return;
+            _lastLogText = msg;
+            _logEntries.push(msg);
+
+            const li = document.createElement('li');
+            const cls = classifyLog(msg);
+            li.className = 'log-entry' + (cls ? ' ' + cls : '');
+            const ts = new Date().toLocaleTimeString('ko-KR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            li.textContent = `[${ts}] ${msg}`;
+            const list = document.getElementById('logList');
+            if (list) {
+                list.appendChild(li);
+                if (_logOpen) {
+                    const area = document.getElementById('logArea');
+                    if (area) area.scrollTop = area.scrollHeight;
+                }
+            }
+        }
+        // ────────────────────────────────────────────
+
         document.getElementById('searchForm').addEventListener('submit', async e => {
             e.preventDefault();
             const name = document.getElementById('productName').value.trim();
             if (!name) { alert('제품 이름을 입력해 주세요.'); return; }
             if (!fileInput.files[0]) { alert('제품 이미지를 업로드해 주세요.'); return; }
+
+            // 로그 초기화
+            _logEntries = [];
+            _lastLogText = '';
+            const logList = document.getElementById('logList');
+            if (logList) logList.innerHTML = '';
 
             document.getElementById('searchBtn').disabled = true;
             document.getElementById('queueBtn').disabled = true;
@@ -1298,6 +1731,7 @@
                             if (data.status) {
                                 const liveEl = document.getElementById('liveStatusText');
                                 if (liveEl) liveEl.textContent = data.status;
+                                appendLog(data.status);
                                 const s = data.status;
                                 if (s.includes('검색 시작') || s.includes('검색 중')) setStep(1);
                                 else if (s.includes('결과를 정리') || s.includes('수집')) setStep(2);
@@ -1319,6 +1753,7 @@
                 const data = await res.json();
                 if (res.ok) {
                     setStep(4); // 모두 완료
+                    appendLog('✅ 검색 완료 — 검수 페이지로 이동 중...');
                     window.location.href = data.redirect_url;
                 } else {
                     alert(data.error || '검색 중 오류가 발생했습니다.');

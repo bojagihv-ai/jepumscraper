@@ -40,6 +40,7 @@ class ProductResult:
     local_thumbnail_path: str = "" # 로컬에 다운로드된 썸네일 경로
     match_tier: int = 0 # 매칭 단계 (1=동일, 2=유사, 3=색상다름, 0=미분류)
     similarity_score: float = 0.0  # 0~100 유사도 점수 (specs/04 기준)
+    seller_name: str = "" # 판매처/업체명
 
 class BaseScraper:
     def __init__(self):

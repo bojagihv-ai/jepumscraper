@@ -62,6 +62,26 @@ def _build_queries(keyword: str) -> List[str]:
     return queries
 
 
+def _extract_seller_name(node) -> str:
+    selectors = [
+        '[class*="mall_name"]',
+        '[class*="basicList_mall"]',
+        '[class*="product_mall"]',
+        '[class*="seller"]',
+        '[class*="store"]',
+    ]
+    bad_terms = ("원", "배송", "리뷰", "찜", "광고", "가격", "구매")
+    for selector in selectors:
+        found = node.select_one(selector)
+        if not found:
+            continue
+        text = re.sub(r'\s+', ' ', found.get_text(' ', strip=True)).strip()
+        text = re.sub(r'^(판매처|판매자|스토어|쇼핑몰|몰)\s*[:：>\-]?\s*', '', text).strip()
+        if text and not re.search(r'\d{3,}', text) and not any(term in text for term in bad_terms):
+            return text[:40]
+    return ""
+
+
 # ─── HTML 파싱 ────────────────────────────────────────────────────────────────
 
 def _parse_naver_shopping_html(html: str, max_count: int) -> List[ProductResult]:
@@ -151,11 +171,13 @@ def _parse_naver_shopping_html(html: str, max_count: int) -> List[ProductResult]
                 product_url = f'https://search.shopping.naver.com/catalog/{nv_mid}'
                 if 'smartstore.naver.com' in href:
                     product_url = href
+                seller_name = _extract_seller_name(item)
 
                 results.append(ProductResult(
                     id=f'naver_{nv_mid}', platform='네이버쇼핑',
                     title=title[:120], price=price,
                     product_url=product_url, thumbnail_url=thumb_url,
+                    seller_name=seller_name or '네이버쇼핑',
                 ))
             except Exception as e:
                 logger.debug(f'[파싱] 항목 오류: {e}')
@@ -205,6 +227,7 @@ def _parse_naver_shopping_html(html: str, max_count: int) -> List[ProductResult]
                 title=title[:120], price=price,
                 product_url=f'https://search.shopping.naver.com/catalog/{nv_mid}',
                 thumbnail_url=thumb,
+                seller_name=_extract_seller_name(container) or '네이버쇼핑',
             ))
 
     return results
@@ -253,6 +276,7 @@ def _parse_naver_integrated(html: str, max_count: int) -> List[dict]:
             'nv_mid': nv_mid, 'title': title[:120], 'price': price,
             'product_url': f'https://search.shopping.naver.com/catalog/{nv_mid}',
             'thumbnail_url': thumb,
+            'seller_name': _extract_seller_name(container) or '네이버쇼핑',
         })
         if len(products) >= max_count:
             break
@@ -388,6 +412,7 @@ def _scrape_with_requests_fallback(query: str, max_count: int) -> List[ProductRe
             id=f'naver_{it["nv_mid"]}', platform='네이버쇼핑',
             title=it['title'], price=it['price'],
             product_url=it['product_url'], thumbnail_url=it['thumbnail_url'],
+            seller_name=it.get('seller_name', '') or '네이버쇼핑',
         ) for it in items]
     except Exception as e:
         logger.error(f'[네이버쇼핑] requests 오류: {e}')

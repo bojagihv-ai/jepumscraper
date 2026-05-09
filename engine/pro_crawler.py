@@ -425,13 +425,32 @@ class ProCrawler:
     def _acquire_bypass_cookies(self, url: str) -> Dict[str, str]:
         """bypass_engine으로 플랫폼별 우회 쿠키 획득."""
         try:
-            from engine.bypass_engine import get_bypass_cookies, detect_protection
+            from engine.bypass_engine import get_bypass_cookies
             domain = urlparse(url).netloc
+
+            # 플랫폼별 보호 시스템 지정
             if "coupang.com" in domain:
                 return get_bypass_cookies(url, protection='akamai')
-            # 기타 도메인은 auto-detect
+            if any(d in domain for d in ("gmarket.co.kr", "ebay.co.kr")):
+                return get_bypass_cookies(url, protection='akamai')
+            if "auction.co.kr" in domain:
+                return get_bypass_cookies(url, protection='akamai')
+            if "11st.co.kr" in domain:
+                return get_bypass_cookies(url, protection='cloudflare')
+            if "naver.com" in domain or "shopping.naver.com" in domain:
+                # 네이버는 자체 봇 감지 — 쿠키 기반 우회 효과 낮음
+                return {}
+
+            # 알 수 없는 도메인: 캐시에 이미 우회 쿠키가 있으면 반환
+            from engine.bypass_engine import _get_cached
+            for protection in ('akamai', 'cloudflare', 'datadome', 'perimeterx'):
+                cached = _get_cached(domain, protection)
+                if cached:
+                    logger.debug('[ProCrawler] 캐시 우회 쿠키 사용: %s=%s', domain, protection)
+                    return cached
             return {}
-        except Exception:
+        except Exception as e:
+            logger.debug('[ProCrawler] bypass_cookies 획득 실패: %s', e)
             return {}
 
     def _build_playwright_cookies(

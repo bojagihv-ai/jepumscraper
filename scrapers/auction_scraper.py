@@ -168,6 +168,15 @@ def _parse_auction_html(html: str, max_count: int) -> List[ProductResult]:
                 match = re.search(r'([0-9]{1,3}(?:,[0-9]{3})+)\s*원?', node.get_text(" ", strip=True))
                 price_digits = match.group(1).replace(',', '') if match else '0'
 
+            seller_name = _text_first(node, [
+                '.text--seller', '.link--seller',
+                '.seller', '.box__seller', '.section--seller',
+                '[class*="shop"]', '[class*="store"]',
+            ])
+            seller_name = re.sub(r'\s+', ' ', seller_name or '').strip()
+            if re.search(r'\d{3,}', seller_name):
+                seller_name = ''
+
             img = node.select_one('img[src], img[data-src], img[data-original], img[data-lazy]')
             thumb_url = ''
             if img:
@@ -191,6 +200,7 @@ def _parse_auction_html(html: str, max_count: int) -> List[ProductResult]:
                 price=price_digits or '0',
                 product_url=href,
                 thumbnail_url=thumb_url,
+                seller_name=seller_name or '옥션',
             ))
         except Exception as exc:
             logger.debug("[Auction] parse skipped: %s", exc)

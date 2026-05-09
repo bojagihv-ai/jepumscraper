@@ -90,7 +90,7 @@ class ExcelExporter:
             max_detail_parts = max(
                 [len((detail_data.get(prod.id, {}) or {}).get("screenshots") or []) for prod in products] or [0]
             )
-            headers = ["매칭단계", "플랫폼", "제품명", "가격", "URL", "썸네일", "상세 미리보기", "상세 원본 파일"]
+            headers = ["매칭단계", "플랫폼", "업체명", "제품명", "가격", "URL", "썸네일", "상세 미리보기", "상세 원본 파일"]
             if max_detail_parts > 1:
                 headers.extend([f"상세 원본 {idx}" for idx in range(2, max_detail_parts + 1)])
             last_col = len(headers)
@@ -105,10 +105,10 @@ class ExcelExporter:
                 cell.font = header_font
                 cell.alignment = Alignment(horizontal="center", vertical="center")
 
-            widths = {"A": 13, "B": 13, "C": 44, "D": 12, "E": 58, "F": 18, "G": 28, "H": 54}
+            widths = {"A": 13, "B": 13, "C": 18, "D": 44, "E": 12, "F": 58, "G": 18, "H": 28, "I": 54}
             for col, width in widths.items():
                 ws.column_dimensions[col].width = width
-            for col_idx in range(9, last_col + 1):
+            for col_idx in range(10, last_col + 1):
                 ws.column_dimensions[get_column_letter(col_idx)].width = 28
             ws.freeze_panes = "A2"
             ws.auto_filter.ref = f"A1:{get_column_letter(last_col)}1"
@@ -127,10 +127,11 @@ class ExcelExporter:
             for prod in products:
                 ws.cell(row=row_idx, column=1, value=tier_labels.get(prod.match_tier, "?"))
                 ws.cell(row=row_idx, column=2, value=prod.platform)
-                ws.cell(row=row_idx, column=3, value=prod.title)
-                ws.cell(row=row_idx, column=4, value=prod.price)
+                ws.cell(row=row_idx, column=3, value=getattr(prod, "seller_name", "") or prod.platform)
+                ws.cell(row=row_idx, column=4, value=prod.title)
+                ws.cell(row=row_idx, column=5, value=prod.price)
 
-                url_cell = ws.cell(row=row_idx, column=5, value=prod.product_url)
+                url_cell = ws.cell(row=row_idx, column=6, value=prod.product_url)
                 url_cell.hyperlink = prod.product_url
                 url_cell.font = Font(color="4299E1", underline="single")
 
@@ -145,7 +146,7 @@ class ExcelExporter:
                     cell.border = thin_border
                     cell.alignment = Alignment(
                         vertical="center",
-                        wrap_text=col_idx in (1, 3, 5) or col_idx >= 8,
+                        wrap_text=col_idx in (1, 3, 4, 6) or col_idx >= 9,
                     )
 
                 if prod.local_thumbnail_path and os.path.exists(prod.local_thumbnail_path):
@@ -155,7 +156,7 @@ class ExcelExporter:
                         img = ExcelImage(thumb_preview_path)
                         img.width = thumb_w
                         img.height = thumb_h
-                        ws.add_image(img, f"F{row_idx}")
+                        ws.add_image(img, f"G{row_idx}")
                     except Exception as exc:
                         logger.error("Cannot add thumbnail: %s", exc)
 
@@ -171,11 +172,11 @@ class ExcelExporter:
                         img_detail = ExcelImage(preview_path)
                         img_detail.width = preview_w
                         img_detail.height = preview_h
-                        ws.add_image(img_detail, f"G{row_idx}")
+                        ws.add_image(img_detail, f"H{row_idx}")
                     except Exception as exc:
                         logger.error("Cannot add detail preview: %s", exc)
 
-                    detail_cell = ws.cell(row=row_idx, column=8)
+                    detail_cell = ws.cell(row=row_idx, column=9)
                     detail_cell.value = "상세 이미지 열기" if len(valid_paths) == 1 else f"상세 이미지 열기 외 {len(valid_paths) - 1}개"
                     detail_cell.hyperlink = _file_uri(first_asset_path)
                     detail_cell.font = Font(color="4299E1", underline="single", size=9)
@@ -184,7 +185,7 @@ class ExcelExporter:
                     for idx, part_path in enumerate(valid_paths[1:], start=2):
                         try:
                             asset_path = _copy_detail_asset(part_path, output_path, prod.id, idx)
-                            img_col = 8 + (idx - 1)
+                            img_col = 8 + idx
                             cell = ws.cell(row=row_idx, column=img_col)
                             cell.value = f"분할 {idx} 열기"
                             cell.hyperlink = _file_uri(asset_path)
@@ -195,7 +196,7 @@ class ExcelExporter:
 
                 mhtml_path = product_data.get("mhtml_path", "")
                 if mhtml_path:
-                    mhtml_cell = ws.cell(row=row_idx, column=8)
+                    mhtml_cell = ws.cell(row=row_idx, column=9)
                     if mhtml_cell.value:
                         mhtml_cell.value = f"{mhtml_cell.value}\nMHTML: {mhtml_path}"
                     else:

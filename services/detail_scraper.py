@@ -211,6 +211,13 @@ BLOCKED_KEYWORDS = [
     "Cloudflare",
     "cf-turnstile",
     "사람인지 확인",
+    "사용자 활동 검토",          # Gmarket Cloudflare
+    "원활한 서비스 이용을 위한 간단한 확인",  # Auction Cloudflare
+    "봇(Bot)이 아님을 아래 확인",# Gmarket CF 본문
+    "Just a moment...",          # Cloudflare 기본 제목
+    "잠시만 기다려주십시오",      # Cloudflare 한글 제목 1
+    "잠시만 기다리십시오",        # Cloudflare 한글 제목 2
+
     "원활한 서비스 이용을 위한 간단한 확인 안내",
     "봇(Bot)이란",
     "보안 확인을 완료해 주세요",
@@ -282,6 +289,7 @@ def _find_autohotkey_exe() -> str:
     configured = getattr(config, "AUTOHOTKEY_EXE", "") or os.getenv("AUTOHOTKEY_EXE", "")
     candidates = [configured] if configured else []
     candidates.extend([
+        r"C:\Users\kua\AppData\Local\Programs\AutoHotkey\v2\AutoHotkey64.exe",
         r"C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe",
         r"C:\Program Files\AutoHotkey\v2\AutoHotkey.exe",
         r"C:\Program Files\AutoHotkey\AutoHotkey64.exe",
@@ -655,8 +663,129 @@ def _run_ahk_scroll(hwnd: int, steps: int = 1, delay_ms: int = 700, home_first: 
     tools_dir = Path(config.BASE_DIR) / "tools"
     v1_script = tools_dir / "coupang_scroll_v1.ahk"
     v2_script = tools_dir / "coupang_scroll_v2.ahk"
-    scripts = [v2_script, v1_script] if "\\v2\\" in exe.lower() else [v1_script, v2_script]
+    script = v2_script if "\\v2\\" in exe.lower() else v1_script
+    if not script.exists():
+        logger.debug("[AHK] version-compatible script missing: %s", script.name)
+        return False
     timeout = max(8, int((max(steps, 1) * max(delay_ms, 100)) / 1000) + 8)
+    try:
+        completed = subprocess.run(
+            [
+                exe,
+                str(script),
+                str(hwnd),
+                str(max(0, steps)),
+                str(max(0, delay_ms)),
+                "1" if home_first else "0",
+            ],
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return True
+        logger.debug("[AHK] %s failed rc=%s stderr=%s", script.name, completed.returncode, completed.stderr)
+    except Exception as exc:
+        logger.debug("[AHK] %s failed: %s", script.name, exc)
+    return False
+
+
+
+
+
+def _log_security_check_event(product_id: str, platform: str, method: str, status: str, url: str = ""):
+    """보안 확인 이벤트를 전용 로그 파일에 기록"""
+    try:
+        from datetime import datetime
+        log_file = r'C:\JepumScraper\logs\security_check.log'
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(log_file, 'a', encoding='utf-8') as lf:
+            lf.write(f"{ts} | {platform} | {product_id} | {method} | {status} | {url}\n")
+    except Exception:
+        pass
+
+def _show_captcha_success_toast(product_id: str):
+    try:
+        import subprocess
+        import os
+        from datetime import datetime
+        
+        # 1. Toast Notification
+        ps_script = f"""
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+        $textNodes = $template.GetElementsByTagName('text')
+        $textNodes.Item(0).AppendChild($template.CreateTextNode('🎉 캡챠 자동 해제 성공!')) | Out-Null
+        $textNodes.Item(1).AppendChild($template.CreateTextNode('[{product_id}] 봇이 Cloudflare 캡챠를 뚫었습니다!')) | Out-Null
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+        $notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('JepumScraper')
+        $notifier.Show($toast)
+        """
+        subprocess.run(['powershell', '-Command', ps_script], creationflags=subprocess.CREATE_NO_WINDOW)
+        
+        # 2. Write to success log file
+        log_file = r'C:\JepumScraper\logs\captcha_success.log'
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+        with open(log_file, 'a', encoding='utf-8') as lf:
+            lf.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - [{product_id}] CAPTCHA Auto-Resolved Successfully\n")
+    except Exception as e:
+        logger.error(f'Toast notification failed: {e}')
+
+def _find_captcha_hwnd():
+    """현재 화면에 떠 있는 Chrome 창 중 CAPTCHA 관련 제목을 가진 창의 hwnd를 찾습니다."""
+    found_hwnd = 0
+    def callback(hwnd, extra):
+        nonlocal found_hwnd
+        if found_hwnd != 0:
+            return
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if "Chrome" in title and any(cw in title for cw in [
+                "Just a moment", "보안 확인", "잠시만 기다려주십시오", "잠시만 기다리십시오",
+                "원활한 서비스", "사용자 활동 검토", "간단한 확인 안내", "Security Check"
+            ]):
+                found_hwnd = hwnd
+    win32gui.EnumWindows(callback, None)
+    return found_hwnd
+
+
+def _run_ahk_cf_captcha_click(hwnd: int = 0, max_wait_sec: int = 15, check_interval_ms: int = 400) -> bool:
+    """Cloudflare '사람인지 확인하십시오' 체크박스를 AHK로 자동 클릭한다.
+
+    스크래핑 중 Cloudflare Turnstile 캡챠가 감지되면 이 함수를 호출하여
+    체크박스를 클릭할 수 있다.
+
+    Args:
+        hwnd: 브라우저 창 핸들 (0이면 현재 활성 창 대상)
+        max_wait_sec: 캡챠가 나타날 때까지 기다리는 최대 시간(초)
+        check_interval_ms: 탐색 반복 간격(ms)
+
+    Returns:
+        True = 클릭 성공, False = 타임아웃 또는 AHK 없음
+    """
+    if not getattr(config, "ENABLE_AHK_FALLBACK", True):
+        return False
+    if not hwnd:
+        logger.debug("[AHK-CF] target hwnd missing; skip active-window captcha helper")
+        return False
+    exe = _find_autohotkey_exe()
+    if not exe:
+        logger.debug("[AHK-CF] AutoHotkey 실행파일 없음, 캡챠 클릭 스킵")
+        return False
+
+    tools_dir = Path(config.BASE_DIR) / "tools"
+    v1_script = tools_dir / "cf_captcha_click_v1.ahk"
+    v2_script = tools_dir / "cf_captcha_click_v2.ahk"
+    is_v2_exe = "\\v2\\" in exe.lower()
+    scripts = [v2_script] if is_v2_exe else [v1_script]
+    if not scripts[0].exists():
+        logger.debug("[AHK-CF] version-compatible script missing: %s", scripts[0].name)
+        return False
+
+    timeout = max_wait_sec + 5  # AHK 자체 대기 + 여유
+
     for script in scripts:
         if not script.exists():
             continue
@@ -665,10 +794,9 @@ def _run_ahk_scroll(hwnd: int, steps: int = 1, delay_ms: int = 700, home_first: 
                 [
                     exe,
                     str(script),
-                    str(hwnd),
-                    str(max(0, steps)),
-                    str(max(0, delay_ms)),
-                    "1" if home_first else "0",
+                    str(hwnd) if hwnd else "",
+                    str(max(1, max_wait_sec)),
+                    str(max(100, check_interval_ms)),
                 ],
                 timeout=timeout,
                 capture_output=True,
@@ -676,13 +804,147 @@ def _run_ahk_scroll(hwnd: int, steps: int = 1, delay_ms: int = 700, home_first: 
                 check=False,
             )
             if completed.returncode == 0:
+                logger.info("[AHK-CF] Cloudflare 체크박스 클릭 성공 (hwnd=%s)", hwnd)
                 return True
-            logger.debug("[AHK] %s failed rc=%s stderr=%s", script.name, completed.returncode, completed.stderr)
+            elif completed.returncode == 1:
+                logger.debug("[AHK-CF] 타임아웃: 캡챠 미감지 (hwnd=%s)", hwnd)
+                return False
+            elif completed.returncode == 2:
+                logger.debug("[AHK-CF] 실행 불가: 창 핸들/인자 오류 (hwnd=%s)", hwnd)
+                return False
+            else:
+                logger.debug("[AHK-CF] %s rc=%s stderr=%s", script.name, completed.returncode, completed.stderr)
+        except subprocess.TimeoutExpired:
+            logger.debug("[AHK-CF] AHK 스크립트 자체 타임아웃")
         except Exception as exc:
-            logger.debug("[AHK] %s failed: %s", script.name, exc)
+            logger.debug("[AHK-CF] 실행 실패: %s", exc)
+
     return False
 
 
+def _focus_chrome_window_for_captcha(hwnd: int, product_id: str = "", reason: str = "captcha") -> bool:
+    """Bring the detected Chrome window to the foreground and maximize it."""
+    if not hwnd:
+        return False
+    try:
+        import ctypes
+        import win32api
+        import win32con
+        import win32gui
+
+        if not win32gui.IsWindow(hwnd):
+            logger.debug("[CAPTCHA-Focus] invalid hwnd=%s product=%s reason=%s", hwnd, product_id, reason)
+            return False
+        if not win32gui.IsWindowVisible(hwnd):
+            logger.debug("[CAPTCHA-Focus] hidden hwnd=%s product=%s reason=%s", hwnd, product_id, reason)
+            return False
+
+        if win32gui.IsIconic(hwnd):
+            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            time.sleep(0.15)
+
+        win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+        time.sleep(0.15)
+
+        try:
+            win32api.keybd_event(win32con.VK_MENU, 0, 0, 0)
+            win32api.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+            time.sleep(0.05)
+        except Exception:
+            pass
+
+        try:
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+        except Exception:
+            pass
+
+        foreground_ok = False
+        for _ in range(3):
+            try:
+                win32gui.BringWindowToTop(hwnd)
+            except Exception:
+                pass
+            try:
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            time.sleep(0.15)
+            if win32gui.GetForegroundWindow() == hwnd:
+                foreground_ok = True
+                break
+
+        if not foreground_ok:
+            try:
+                ctypes.windll.user32.SwitchToThisWindow(hwnd, True)
+                time.sleep(0.15)
+                foreground_ok = win32gui.GetForegroundWindow() == hwnd
+            except Exception:
+                pass
+
+        try:
+            win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+        except Exception:
+            pass
+
+        logger.info(
+            "[CAPTCHA-Focus] Chrome window foreground/maximize %s hwnd=%s product=%s reason=%s title=%s",
+            "ok" if foreground_ok else "partial",
+            hwnd,
+            product_id,
+            reason,
+            win32gui.GetWindowText(hwnd),
+        )
+        return True
+    except Exception as exc:
+        logger.debug("[CAPTCHA-Focus] failed hwnd=%s product=%s reason=%s: %s", hwnd, product_id, reason, exc)
+        return False
+
+
+def _run_ahk_naver_login_click(hwnd: int = 0, max_wait_sec: int = 5, check_interval_ms: int = 400) -> bool:
+    if not getattr(config, "ENABLE_AHK_FALLBACK", True):
+        return False
+    exe = _find_autohotkey_exe()
+    if not exe:
+        logger.debug("[AHK-Naver] AutoHotkey 실행파일 없음, 로그인 클릭 스킵")
+        return False
+
+    tools_dir = Path(config.BASE_DIR) / "tools"
+    v1_script = tools_dir / "naver_login_click_v1.ahk"
+    v2_script = tools_dir / "naver_login_click_v2.ahk"
+    scripts = [v2_script] if "\\v2\\" in exe.lower() else [v1_script]
+    if not scripts[0].exists():
+        logger.debug("[AHK-Naver] version-compatible script missing: %s", scripts[0].name)
+        return False
+
+    timeout = max_wait_sec + 5
+
+    for script in scripts:
+        if not script.exists():
+            continue
+        try:
+            completed = subprocess.run(
+                [
+                    exe,
+                    str(script),
+                    str(hwnd) if hwnd else "",
+                    str(max(1, max_wait_sec)),
+                    str(max(100, check_interval_ms)),
+                ],
+                timeout=timeout,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode == 0:
+                logger.info("[AHK-Naver] 네이버 로그인 버튼 클릭 성공 (hwnd=%s)", hwnd)
+                return True
+            else:
+                logger.debug("[AHK-Naver] 타임아웃 또는 실패: rc=%s", completed.returncode)
+        except subprocess.TimeoutExpired:
+            logger.debug("[AHK-Naver] AHK 스크립트 타임아웃")
+        except Exception as exc:
+            logger.debug("[AHK-Naver] 실행 실패: %s", exc)
+    return False
 
 def _normalize_detail_url(url: str) -> str:
     """Unwrap marketplace redirect/ad URLs before opening the product page."""
@@ -1172,20 +1434,23 @@ def _postprocess_naver_capture(path: str) -> Dict:
         with Image.open(path) as img:
             rgb = img.convert("RGB")
             w, h = rgb.size
-            if w < 1180 or h < 700:
+            if w < 1500 or h < 700:
                 rgb.close()
+                info.update(_remove_naver_stitch_seams(path))
                 return info
 
-            if w >= 1700:
-                right = int(w * 0.72)
-            elif w >= 1200:
-                right = int(w * 0.88)
+            preferred_width = int(getattr(config, "NAVER_RIGHT_RAIL_CROP_WIDTH", 1240) or 1240)
+            if w >= 1800:
+                right = preferred_width
+            elif w >= 1500:
+                right = min(preferred_width, int(w * 0.72))
             else:
                 right = w
 
-            right = max(900, min(w, right))
+            right = max(980, min(w, right))
             if right >= w - 32:
                 rgb.close()
+                info.update(_remove_naver_stitch_seams(path))
                 return info
 
             tmp_path = path + ".tmp.jpg"
@@ -1222,6 +1487,8 @@ def is_detail_result_usable(detail) -> bool:
         return False
     target_title = str(diagnostics.get("target_title") or "").lower()
     if any(word in target_title for word in ("login", "sign in", "\ub85c\uadf8\uc778")):
+        return False
+    if any(word in target_title for word in ("잠시만 기다", "just a moment", "보안 확인", "security check")):
         return False
     for screenshot in screenshots:
         if not screenshot or not os.path.exists(screenshot):
@@ -1261,10 +1528,29 @@ class DetailScraper:
 
             html = page.html
             if _is_blocked(html):
-                logger.warning(f"[{product_id}] DrissionPage 봇 차단 감지")
-                result["status"] = "blocked"
-                page.quit()
-                return result
+                logger.warning(f"[{product_id}] DrissionPage 봇 차단 감지 → AHK CF 캡챠 클릭 시도")
+                if _run_ahk_cf_captcha_click(hwnd=_find_captcha_hwnd(), max_wait_sec=12, check_interval_ms=400):
+                    logger.info(f"[{product_id}] AHK CF 클릭 완료 → 최대 15초 대기 후 재확인")
+                    resolved = False
+                    for _ in range(15):
+                        time.sleep(1.0)
+                        html = page.html
+                        if not _is_blocked(html):
+                            resolved = True
+                            break
+                    if resolved:
+                        logger.info(f"[{product_id}] CF 캡챠 해제 성공, DrissionPage 캡처 계속")
+                        _show_captcha_success_toast(product_id)
+                    else:
+                        logger.warning(f"[{product_id}] CF 캡챠 해제 실패 → blocked 처리")
+                        result["status"] = "blocked"
+                        page.quit()
+                        return result
+                else:
+                    logger.warning(f"[{product_id}] AHK 클릭 실패 → blocked 처리")
+                    result["status"] = "blocked"
+                    page.quit()
+                    return result
 
             expanded = self._expand_market_details_drission(page, product_id, platform_key)
 
@@ -1634,12 +1920,34 @@ class DetailScraper:
 
                 content = page.content()
                 if _is_blocked(content):
-                    logger.warning(f"[{product_id}] Playwright 봇 차단 감지")
-                    result["status"] = "blocked"
-                    context.close()
-                    if tmp_profile:
-                        shutil.rmtree(tmp_profile, ignore_errors=True)
-                    return result
+                    logger.warning(f"[{product_id}] Playwright 봇 차단 감지 → AHK CF 캡챠 클릭 시도")
+                    # AHK로 Cloudflare 체크박스 클릭 시도 (gmarket/auction 공통)
+                    if _run_ahk_cf_captcha_click(hwnd=_find_captcha_hwnd(), max_wait_sec=12, check_interval_ms=400):
+                        logger.info(f"[{product_id}] AHK CF 클릭 완료 → 최대 15초 대기 후 재확인")
+                        resolved = False
+                        for _ in range(15):
+                            time.sleep(1.0)
+                            content = page.content()
+                            if not _is_blocked(content):
+                                resolved = True
+                                break
+                        if resolved:
+                            logger.info(f"[{product_id}] CF 캡챠 해제 성공, Playwright 캡처 계속")
+                            _show_captcha_success_toast(product_id)
+                        else:
+                            logger.warning(f"[{product_id}] CF 캡챠 해제 실패 → blocked 처리")
+                            result["status"] = "blocked"
+                            context.close()
+                            if tmp_profile:
+                                shutil.rmtree(tmp_profile, ignore_errors=True)
+                            return result
+                    else:
+                        logger.warning(f"[{product_id}] AHK 클릭 실패 → blocked 처리")
+                        result["status"] = "blocked"
+                        context.close()
+                        if tmp_profile:
+                            shutil.rmtree(tmp_profile, ignore_errors=True)
+                        return result
 
                 expanded = self._expand_market_details_playwright(page, product_id, platform_key)
 
@@ -1933,7 +2241,7 @@ class DetailScraper:
                         if any(hint.lower() in title_lower for hint in title_hints):
                             hwnd_target = hwnd
                             break
-                    if not hwnd_target and new_wins and not is_auction:
+                    if not hwnd_target and new_wins and not (is_auction or is_gmarket):
                         hwnd_target = new_wins[-1][0]
                 if hwnd_target:
                     break
@@ -1975,8 +2283,15 @@ class DetailScraper:
                 return result
 
             page_title = win32gui.GetWindowText(hwnd_target)
-            bad_screen_titles = ["login", "sign in", "\ub85c\uadf8\uc778"]
+            bad_screen_titles = ["login", "sign in", "\ub85c\uadf8\uc778", "제목 없음", "untitled", "about:blank"]
             title_lower = (page_title or "").lower()
+            if is_gmarket and any(word in title_lower for word in ("제목 없음", "untitled", "about:blank")):
+                for _ in range(32):
+                    time.sleep(0.5)
+                    page_title = win32gui.GetWindowText(hwnd_target)
+                    title_lower = (page_title or "").lower()
+                    if not any(word in title_lower for word in ("제목 없음", "untitled", "about:blank")):
+                        break
             if not is_coupang and any(word in title_lower for word in bad_screen_titles):
                 if is_naver:
                     login_wait_sec = max(0, int(getattr(config, "NAVER_LOGIN_WAIT_SEC", 240) or 0))
@@ -1990,6 +2305,7 @@ class DetailScraper:
                         product_id,
                         login_wait_sec,
                     )
+                    _run_ahk_naver_login_click(hwnd=hwnd_target, max_wait_sec=5)
                     try:
                         if job_id:
                             import progress_store as _progress_store
@@ -2108,10 +2424,108 @@ class DetailScraper:
                 result["diagnostics"].update({"target_title": page_title})
                 return result
             logger.info(f"[{product_id}] 화면 캡처 대상 창: {hwnd_target} {page_title}")
-            CAPTCHA_TITLES = ["보안 확인", "Security Check", "로봇이 아닙니다"]
+            CAPTCHA_TITLES = [
+                "보안 확인",           # 일반
+                "Security Check",      # 영문
+                "로봇이 아닙니다",     # 일반
+                "사용자 활동 검토",    # Gmarket Cloudflare
+                "원활한 서비스",       # Auction Cloudflare
+                "간단한 확인 안내",    # Auction Cloudflare 2
+                "Just a moment",       # Cloudflare 기본
+                "잠시만 기다려주십시오",# Cloudflare 한글 1
+                "잠시만 기다리십시오", # Cloudflare 한글 2 (실제 확인된 제목)
+                "봇 확인",             # 기타
+            ]
+
+            # Chrome 이탈 확인 다이얼로그 감지 (Gmarket/Auction 캡챠 페이지에서 자주 발생)
+            CHROME_DIALOG_TITLES = [
+                "다른 페이지를 방문하시겠습니까",   # Gmarket CF beforeunload dialog
+                "이 사이트를 벗어나시겠습니까",      # Chrome Leave site dialog
+                "Leave site",                         # 영문
+                "사이트를 떠나시겠습니까",
+            ]
+            if any(d in page_title for d in CHROME_DIALOG_TITLES):
+                _focus_chrome_window_for_captcha(hwnd_target, product_id, "chrome_dialog")
+                logger.warning(f"[{product_id}] Chrome 이탈 다이얼로그 감지 '{page_title}' → Esc 후 AHK 시도")
+                try:
+                    import pyautogui as _pag
+                    _pag.press("escape")
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+                _run_ahk_cf_captcha_click(hwnd=hwnd_target, max_wait_sec=10, check_interval_ms=350)
+                time.sleep(2.0)
+                page_title = win32gui.GetWindowText(hwnd_target)
+
+            # Gmarket/Auction 전용: 제목이 단순 브랜드명만 있으면 캡챠 의심 → 선제 AHK
+            _GMARKET_BRAND_ONLY = ("G마켓", "지마켓", "Gmarket")
+            _AUCTION_BRAND_ONLY = ("옥션", "Auction")
+            _is_brand_only_title = (
+                (is_gmarket and any(page_title.strip().startswith(b) and len(page_title.strip()) < 20
+                                    for b in _GMARKET_BRAND_ONLY))
+                or
+                (is_auction and any(page_title.strip().startswith(b) and len(page_title.strip()) < 15
+                                    for b in _AUCTION_BRAND_ONLY))
+            )
+            if _is_brand_only_title:
+                _focus_chrome_window_for_captcha(hwnd_target, product_id, "brand_only_title")
+                logger.warning(f"[{product_id}] 브랜드명만 있는 창 제목 '{page_title}' → 캡챠 의심, AHK 선제 스캔")
+                if _run_ahk_cf_captcha_click(hwnd=hwnd_target, max_wait_sec=5, check_interval_ms=400):
+                    logger.info(f"[{product_id}] AHK 선제 클릭 성공 → 3초 대기")
+                    time.sleep(3.0)
+                    page_title = win32gui.GetWindowText(hwnd_target)
+
             if any(cw in page_title for cw in CAPTCHA_TITLES):
-                logger.warning(f"[{product_id}] CAPTCHA 감지 → 포기")
-                return result
+                _focus_chrome_window_for_captcha(hwnd_target, product_id, "captcha_title")
+
+                logger.warning(f"[{product_id}] CAPTCHA 감지 → AHK로 체크박스 클릭 시도")
+
+                cf_clicked = _run_ahk_cf_captcha_click(
+
+                    hwnd=hwnd_target,
+
+                    max_wait_sec=12,
+
+                    check_interval_ms=350,
+
+                )
+
+                if cf_clicked:
+                    logger.info(f"[{product_id}] CAPTCHA 1차 클릭 완료 → 10초간 상태 확인")
+                    resolved = False
+                    for _wait in range(10):
+                        time.sleep(1.0)
+                        page_title = win32gui.GetWindowText(hwnd_target)
+                        if not any(cw in page_title for cw in CAPTCHA_TITLES):
+                            resolved = True
+                            break
+
+                    if not resolved:
+                        # 2차 시도: 위치가 미세하게 다를 수 있으므로 재클릭
+                        logger.warning(f"[{product_id}] CAPTCHA 1차 미해제 → 2차 AHK 클릭 시도")
+                        _run_ahk_cf_captcha_click(hwnd=hwnd_target, max_wait_sec=8, check_interval_ms=300)
+                        for _wait2 in range(10):
+                            time.sleep(1.0)
+                            page_title = win32gui.GetWindowText(hwnd_target)
+                            if not any(cw in page_title for cw in CAPTCHA_TITLES):
+                                resolved = True
+                                break
+
+                    if not resolved:
+                        logger.warning(f"[{product_id}] CAPTCHA 2차까지 미해제 (20초) → security_check로 분류")
+                        _log_security_check_event(product_id, "gmarket" if is_gmarket else "auction", "chrome_screen", "captcha_blocked", product_url)
+                        result["status"] = "captcha_blocked"
+                        return result
+
+                    logger.info(f"[{product_id}] CAPTCHA 해제 성공! 캡처 계속 진행")
+                    _show_captcha_success_toast(product_id)
+
+                else:
+                    logger.warning(f"[{product_id}] AHK 클릭 실패 → security_check 분류")
+                    _log_security_check_event(product_id, "gmarket" if is_gmarket else "auction", "chrome_screen", "ahk_click_failed", product_url)
+                    result["status"] = "captcha_blocked"
+                    return result
+
 
             win32gui.ShowWindow(hwnd_target, win32con.SW_MAXIMIZE)
             time.sleep(0.3)
@@ -3600,6 +4014,17 @@ class DetailScraper:
                         f"}})()"
                     )
                     value = (((message or {}).get("result") or {}).get("result") or {}).get("value") or {}
+                    if is_gmarket and isinstance(value, dict):
+                        moved = bool(value.get("moved"))
+                        at_bottom = bool(value.get("atBottom"))
+                        if not moved and not at_bottom:
+                            logger.info(
+                                "[Detail] Gmarket CDP scroll did not move; falling back to physical scroll y=%s height=%s",
+                                value.get("scrollY"),
+                                value.get("scrollHeight"),
+                            )
+                            return False
+                        return moved or at_bottom
                     if is_auction and isinstance(value, dict):
                         moved = bool(value.get("moved"))
                         at_bottom = bool(value.get("atBottom"))
@@ -4857,9 +5282,9 @@ class DetailScraper:
                 if result.get("status") == "success" and result.get("screenshots"):
                     return result
                 page_title = win32gui.GetWindowText(hwnd_target) or page_title
-            if debug_port and (is_coupang or is_elevenst or is_gmarket or is_auction):
+            if debug_port and (is_coupang or is_elevenst or is_auction):
                 _prepare_screen_capture_layout()
-                # 옥션도 G마켓처럼 전체 페이지(상단~하단) fullpage CDP 먼저 시도
+                # 옥션도 전체 페이지(상단~하단) fullpage CDP 먼저 시도
                 if _capture_fullpage_via_cdp():
                     return result
                 # fullpage 실패 시 옥션 전용 섹션 타일러로 fallback
@@ -4917,6 +5342,11 @@ class DetailScraper:
                         logger.info("[Detail] Auction visible window moved to detail before screen capture: %s", reset_value)
                     except Exception as exc:
                         logger.debug("[Detail] Auction visible top reset skipped: %s", exc)
+            elif debug_port and is_gmarket:
+                # G마켓은 창 스크롤 캡처가 가장 안정적이다. CDP는 스크롤/레이아웃 정리만 맡긴다.
+                _prepare_screen_capture_layout()
+                _cdp_eval("window.scrollTo(0, 0); document.scrollingElement && (document.scrollingElement.scrollTop = 0); true;")
+                time.sleep(0.35)
 
             VK_SPACE = 0x20
             SPACE_DN = 1 | (0x39 << 16)
@@ -4925,6 +5355,8 @@ class DetailScraper:
             naver_expected_scrolls = 0
             auction_expected_scrolls = 0
             auction_reached_bottom = False
+            gmarket_expected_scrolls = 0
+            gmarket_reached_bottom = False
             estimated_step = 420   # CDP 없을 때 스크롤량 추정용 기본값
             scroll_height = 0
             scroll_height = 0
@@ -4956,6 +5388,19 @@ class DetailScraper:
                     SCROLL_COUNT = max(34, min(160, auction_expected_scrolls))
                 else:
                     SCROLL_COUNT = 72
+            elif is_gmarket:
+                metrics = _scroll_metrics_via_cdp()
+                scroll_height = int(metrics.get("scrollHeight") or 0)
+                viewport_height = int(metrics.get("innerHeight") or 0)
+                if viewport_height:
+                    estimated_step = max(520, int(viewport_height * 0.82))
+                else:
+                    estimated_step = max(520, int((win_h - CHROME_UI) * 0.82))
+                if scroll_height and estimated_step:
+                    gmarket_expected_scrolls = int((scroll_height + estimated_step - 1) // estimated_step) + 6
+                    SCROLL_COUNT = max(22, min(120, gmarket_expected_scrolls))
+                else:
+                    SCROLL_COUNT = 36
             screenshots = []
             duplicate_tail_frames = 0
             scroll_positions: List[int] = []
@@ -4965,7 +5410,7 @@ class DetailScraper:
                 if _si == 0:
                     _dismiss_naver_popup()
                 try:
-                    frame_metrics = _scroll_metrics_via_cdp() if debug_port and (is_naver or is_auction) else {}
+                    frame_metrics = _scroll_metrics_via_cdp() if debug_port and (is_naver or is_auction or is_gmarket) else {}
                     full_img = _print_window_capture(hwnd_target)
                     content = full_img.crop((0, CHROME_UI, win_w, win_h))
                     if screenshots:
@@ -4973,7 +5418,17 @@ class DetailScraper:
                         if diff < 0.8:
                             duplicate_tail_frames += 1
                             min_duplicate_frames = 6 if is_naver else (8 if is_auction else 3)
-                            if len(screenshots) >= min_duplicate_frames and duplicate_tail_frames >= 3:
+                            near_gmarket_bottom = False
+                            if is_gmarket and frame_metrics:
+                                current_y = int(frame_metrics.get("scrollY") or 0)
+                                current_inner = int(frame_metrics.get("innerHeight") or viewport_height or 0)
+                                current_height = int(frame_metrics.get("scrollHeight") or scroll_height or 0)
+                                near_gmarket_bottom = bool(current_height and current_inner and current_y + current_inner >= current_height - 24)
+                            if (
+                                len(screenshots) >= min_duplicate_frames
+                                and duplicate_tail_frames >= 3
+                                and (not is_gmarket or near_gmarket_bottom)
+                            ):
                                 logger.info(
                                     "[Detail] stopped screen capture at duplicate tail frame %s (diff=%.2f)",
                                     _si,
@@ -4998,15 +5453,22 @@ class DetailScraper:
                         # Auction CDP: 정확한 절대 scrollY 사용 (심리스 스티칭용)
                         scroll_positions.append(int(frame_metrics.get("scrollY") or 0))
                         scroll_page_heights.append(int(frame_metrics.get("scrollHeight") or scroll_height))
+                    elif is_gmarket and frame_metrics:
+                        scroll_positions.append(int(frame_metrics.get("scrollY") or 0))
+                        scroll_page_heights.append(int(frame_metrics.get("scrollHeight") or scroll_height))
                     full_img.close()
-                    if is_auction and frame_metrics:
+                    if (is_auction or is_gmarket) and frame_metrics:
                         current_y = int(frame_metrics.get("scrollY") or 0)
                         current_inner = int(frame_metrics.get("innerHeight") or viewport_height or 0)
                         current_height = int(frame_metrics.get("scrollHeight") or scroll_height or 0)
                         if current_height and current_inner and current_y + current_inner >= current_height - 24:
-                            auction_reached_bottom = True
+                            if is_auction:
+                                auction_reached_bottom = True
+                            if is_gmarket:
+                                gmarket_reached_bottom = True
                             logger.info(
-                                "[Detail] Auction screen capture reached bottom at frame %s y=%s inner=%s height=%s",
+                                "[Detail] %s screen capture reached bottom at frame %s y=%s inner=%s height=%s",
+                                "Auction" if is_auction else "Gmarket",
                                 _si,
                                 current_y,
                                 current_inner,
@@ -5097,6 +5559,8 @@ class DetailScraper:
                 "naver_expected_scrolls": naver_expected_scrolls,
                 "auction_expected_scrolls": auction_expected_scrolls,
                 "auction_reached_bottom": bool(auction_reached_bottom),
+                "gmarket_expected_scrolls": gmarket_expected_scrolls,
+                "gmarket_reached_bottom": bool(gmarket_reached_bottom),
                 "initial_scroll_height": int(scroll_height or 0),
                 "initial_viewport_height": int(viewport_height or 0),
                 "target_title": page_title,
@@ -5107,6 +5571,47 @@ class DetailScraper:
             result["diagnostics"] = updated_diagnostics
             if not progress_stats.get("ok"):
                 logger.warning(f"[{product_id}] screen capture scroll stalled ({method_name})")
+                # Gmarket/Auction scroll stall = 높은 확률로 CF 캡챠 페이지
+                # → Playwright로 넘어가기 전에 보이는 Chrome 창에서 AHK 클릭 먼저 시도
+                if (is_gmarket or is_auction) and method_name == "chrome_screen":
+                    _focus_chrome_window_for_captcha(hwnd_target, product_id, "scroll_stalled")
+                    logger.warning(f"[{product_id}] Gmarket/Auction stall → AHK CF 클릭 시도 (visible Chrome)")
+                    _STALL_CAPTCHA_TITLES = ["다른 페이지", "방문하시겠습니까", "Just a moment", "보안 확인", "잠시만 기다려주십시오", "잠시만 기다리십시오", "원활한 서비스", "간단한 확인"]
+                    _cf_ok = _run_ahk_cf_captcha_click(hwnd=hwnd_target, max_wait_sec=12, check_interval_ms=350)
+                    if _cf_ok:
+                        logger.info(f"[{product_id}] AHK CF 1차 클릭 → 10초간 재확인")
+                        resolved = False
+                        for _ in range(10):
+                            time.sleep(1.0)
+                            try:
+                                _new_title = win32gui.GetWindowText(hwnd_target)
+                                if not any(cw in _new_title for cw in _STALL_CAPTCHA_TITLES):
+                                    resolved = True
+                                    break
+                            except Exception:
+                                pass
+
+                        if not resolved:
+                            logger.warning(f"[{product_id}] CF 1차 미해제 → 2차 AHK 클릭")
+                            _run_ahk_cf_captcha_click(hwnd=hwnd_target, max_wait_sec=8, check_interval_ms=300)
+                            for _ in range(10):
+                                time.sleep(1.0)
+                                try:
+                                    _new_title = win32gui.GetWindowText(hwnd_target)
+                                    if not any(cw in _new_title for cw in _STALL_CAPTCHA_TITLES):
+                                        resolved = True
+                                        break
+                                except Exception:
+                                    pass
+
+                        if resolved:
+                            logger.info(f"[{product_id}] CF 해제 확인! → 캡처 재시도를 위해 stall 반환")
+                            _show_captcha_success_toast(product_id)
+                        else:
+                            logger.warning(f"[{product_id}] CF 2차까지 미해제 → security_check 기록")
+                            _log_security_check_event(product_id, "gmarket" if is_gmarket else "auction", "chrome_screen", "stall_captcha_failed", product_url)
+                    else:
+                        logger.warning(f"[{product_id}] AHK CF 탐지 실패 (체크박스 없음)")
                 for image in screenshots:
                     image.close()
                 result["status"] = "scroll_stalled"
@@ -5320,6 +5825,19 @@ class DetailScraper:
                         "[Detail] stopping Naver detail fallbacks for %s after screen status=%s",
                         product_id,
                         status,
+                    )
+                    return result
+                # G마켓/옥션: 보안 확인(captcha) 감지 시 fallback 엔진 낭비 방지
+                # → 즉시 중단하고 재시도 큐로 보냄
+                if (
+                    not success
+                    and platform_key in {"gmarket", "auction"}
+                    and status in {"captcha_blocked", "blocked", "scroll_stalled"}
+                ):
+                    _log_security_check_event(product_id, platform_key, method, status, product_url)
+                    logger.warning(
+                        "[Detail] G마켓/옥션 보안 확인 감지 → fallback 중단: %s status=%s method=%s",
+                        product_id, status, method,
                     )
                     return result
                 if success:

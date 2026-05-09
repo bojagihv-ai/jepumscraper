@@ -151,6 +151,15 @@ class ElevenstScraper(BaseScraper):
                         if price_el:
                             price = (await price_el.inner_text()).replace(',', '').strip()
 
+                        seller_name = ''
+                        seller_el = await item.query_selector(
+                            '.c-card-item__seller dd, .c-card-item__store dd, '
+                            '[class*="seller"] dd, [class*="store"] dd, '
+                            '[class*="seller"], [class*="store"]'
+                        )
+                        if seller_el:
+                            seller_name = re.sub(r'\s+', ' ', (await seller_el.inner_text()).strip()).strip()
+
                         # 썸네일 — .c-card-item__thumb img 또는 .c-card-item__visual img
                         img_el = await item.query_selector('.c-card-item__thumb img, .c-card-item__visual img, img[src]:not([src*="spacer"])')
                         thumb_url = ''
@@ -173,7 +182,8 @@ class ElevenstScraper(BaseScraper):
                             results.append(ProductResult(
                                 id=pid, platform='11번가', title=title.strip(),
                                 price=price, product_url=href,
-                                thumbnail_url=thumb_url, local_thumbnail_path=local_thumb
+                                thumbnail_url=thumb_url, local_thumbnail_path=local_thumb,
+                                seller_name=seller_name or '11번가',
                             ))
                     except Exception as e:
                         logger.debug(f"[11번가] 아이템 {idx} 파싱 오류: {e}")

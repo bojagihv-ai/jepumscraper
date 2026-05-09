@@ -33,6 +33,7 @@ import progress_store
 from services.job_queue import job_queue
 from services.history_db import get_all_jobs, get_job_results
 from engines.similarity_scorer import SimilarityScorer
+from services.batch_service import batch_manager, init_batch_service
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = config.INPUT_DIR
@@ -44,6 +45,30 @@ user_sessions = {}
 SETTINGS_FILE = os.path.join(config.BASE_DIR, 'user_settings.json')
 # 마지막 검색 세션 저장 파일
 LAST_SESSION_FILE = os.path.join(config.BASE_DIR, 'last_session.json')
+
+
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """Windows file-lock tolerant rotating handler."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._rollover_blocked_until = 0.0
+
+    def shouldRollover(self, record):
+        if self._rollover_blocked_until > time.monotonic():
+            return False
+        return super().shouldRollover(record)
+
+    def doRollover(self):
+        try:
+            super().doRollover()
+            self._rollover_blocked_until = 0.0
+        except OSError as exc:
+            if not isinstance(exc, PermissionError) and getattr(exc, "winerror", None) != 32:
+                raise
+            self._rollover_blocked_until = time.monotonic() + 60.0
+            if self.stream is None:
+                self.stream = self._open()
 
 
 def setup_logging():
@@ -61,7 +86,7 @@ def setup_logging():
         isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '') == log_path
         for h in root.handlers
     ):
-        handler = RotatingFileHandler(log_path, maxBytes=2_000_000, backupCount=5, encoding='utf-8')
+        handler = SafeRotatingFileHandler(log_path, maxBytes=2_000_000, backupCount=5, encoding='utf-8')
         handler.setFormatter(formatter)
         handler.addFilter(_ProgressPollFilter())
         root.addHandler(handler)
@@ -112,7 +137,12 @@ DEFAULT_SETTINGS = {
         "coupang_secret_key": "",
         "gmarket_api_key": "",
         "auction_api_key": "",
-        "elevenst_app_key": ""
+        "elevenst_app_key": "",
+        "capsolver_api_key": "",
+        "twocaptcha_api_key": "",
+        "anticaptcha_api_key": "",
+        "nopecha_api_key": "",
+        "ezcaptcha_api_key": ""
     },
     "naver_login": {
         "id": "",
@@ -153,24 +183,37 @@ DEFAULT_SETTINGS = {
     "auction_browser_profile_dir": "",
     "enable_ahk_fallback": True,
     "autohotkey_exe": "",
-    "slice_height": 0
+    "slice_height": 0,
+    "gdrive_enabled": True,
+    "gdrive_folder": "JepumScraper 상세이미지",
+    # ── AI 엔진 ──
+    "ai_engine_enabled": False,
+    "ai_engine_type": "ollama",           # 'ollama' | 'openai' | 'gemini'
+    "ai_model": "gemma4:latest",
+    "ai_ollama_url": "http://localhost:11434",
+    "ai_openai_key": "",
+    "ai_gemini_key": "",
+    "ai_use_keywords": True,              # 검색어 최적화
+    "ai_use_ranking": False,             # 후보 재랭킹 (느림)
+    "ai_ranking_top_n": 20,
 }
 
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
-        try:
-            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-                saved = json.load(f)
-                # 기본값과 병합 (새 키 추가 대응)
-                merged = copy.deepcopy(DEFAULT_SETTINGS)
-                for k, v in saved.items():
-                    if isinstance(v, dict) and k in merged:
-                        merged[k].update(v)
-                    else:
-                        merged[k] = v
-                return merged
-        except Exception as e:
-            logging.warning(f"[Settings] load failed, using defaults: {e}")
+        for enc in ('utf-8-sig', 'utf-8'):
+            try:
+                with open(SETTINGS_FILE, 'r', encoding=enc) as f:
+                    saved = json.load(f)
+                    # 기본값과 병합 (새 키 추가 대응)
+                    merged = copy.deepcopy(DEFAULT_SETTINGS)
+                    for k, v in saved.items():
+                        if isinstance(v, dict) and k in merged:
+                            merged[k].update(v)
+                        else:
+                            merged[k] = v
+                    return merged
+            except Exception as e:
+                logging.warning(f"[Settings] load failed (enc={enc}), using defaults: {e}")
     return copy.deepcopy(DEFAULT_SETTINGS)
 
 def save_settings(settings):
@@ -246,6 +289,17 @@ def apply_settings(settings):
     if settings.get('autohotkey_exe'):
         config.AUTOHOTKEY_EXE = settings['autohotkey_exe']
 
+    # ── AI 엔진 ──
+    config.AI_ENGINE_ENABLED = bool(settings.get('ai_engine_enabled', False))
+    config.AI_ENGINE_TYPE = settings.get('ai_engine_type', 'ollama')
+    config.AI_MODEL = settings.get('ai_model', 'gemma4:latest')
+    config.AI_OLLAMA_URL = settings.get('ai_ollama_url', 'http://localhost:11434')
+    config.AI_OPENAI_KEY = settings.get('ai_openai_key', '') or os.getenv('OPENAI_API_KEY', '')
+    config.AI_GEMINI_KEY = settings.get('ai_gemini_key', '') or os.getenv('GEMINI_API_KEY', '')
+    config.AI_USE_KEYWORDS = bool(settings.get('ai_use_keywords', True))
+    config.AI_USE_RANKING = bool(settings.get('ai_use_ranking', False))
+    config.AI_RANKING_TOP_N = int(settings.get('ai_ranking_top_n') or 20)
+
 current_settings = load_settings()
 apply_settings(current_settings)
 
@@ -263,6 +317,7 @@ def _product_to_dict(p) -> dict:
         "local_thumbnail_path": getattr(p, 'local_thumbnail_path', ''),
         "match_tier": getattr(p, 'match_tier', 0),
         "similarity_score": getattr(p, 'similarity_score', 0),
+        "seller_name": getattr(p, 'seller_name', '') or '',
     }
 
 
@@ -287,6 +342,7 @@ def _dict_to_product(d: dict):
     p.local_thumbnail_path = d.get('local_thumbnail_path', '')
     p.match_tier = d.get('match_tier', 0)
     p.similarity_score = float(d.get('similarity_score', 0) or 0)
+    p.seller_name = d.get('seller_name', '') or ''
     return p
 
 
@@ -498,6 +554,10 @@ def load_last_session() -> tuple:
 search_service = SearchService(current_settings)
 detail_scraper = DetailScraper()
 excel_exporter = ExcelExporter()
+
+# 배치 서비스에 공유 오브젝트 주입
+init_batch_service(detail_scraper, user_sessions)
+batch_manager.load_from_disk()
 try:
     import inspect
     import services.detail_scraper as _detail_module
@@ -952,7 +1012,11 @@ def update_settings():
         'coupang_use_dedicated_profile', 'coupang_browser_profile_dir',
         'coupang_assisted_capture', 'coupang_debug_port',
         'auction_browser_profile_dir',
-        'enable_ahk_fallback', 'autohotkey_exe', 'slice_height'
+        'enable_ahk_fallback', 'autohotkey_exe', 'slice_height',
+        'gdrive_enabled', 'gdrive_folder',
+        'ai_engine_enabled', 'ai_engine_type', 'ai_model',
+        'ai_ollama_url', 'ai_openai_key', 'ai_gemini_key',
+        'ai_use_keywords', 'ai_use_ranking', 'ai_ranking_top_n',
     ):
         if key in data:
             settings[key] = data[key]
@@ -963,7 +1027,225 @@ def update_settings():
     global search_service
     search_service = SearchService(settings)
     reload_proxy_manager()
+    # CAPTCHA 솔버 초기화 (API 키 변경 반영)
+    try:
+        from engine.captcha import reset_solver
+        reset_solver()
+    except Exception:
+        pass
     return jsonify({"ok": True})
+
+
+# ── CAPTCHA 잔액 확인 API ──────────────────────────────────────────
+@app.route('/api/captcha/balance', methods=['POST'])
+def captcha_balance():
+    """CAPTCHA 서비스 잔액/유효성 확인."""
+    import requests as _req
+    data = request.json or {}
+    service = data.get('service', '')
+    settings = load_settings()
+    ak = settings.get('api_keys', {})
+
+    try:
+        if service == 'capsolver':
+            key = ak.get('capsolver_api_key', '').strip()
+            if not key:
+                return jsonify({"ok": False, "error": "API 키 미설정"})
+            r = _req.post(
+                "https://api.capsolver.com/getBalance",
+                json={"clientKey": key},
+                timeout=10,
+            )
+            d = r.json()
+            if d.get("errorId", 1) == 0:
+                return jsonify({"ok": True, "balance": d.get("balance", 0)})
+            return jsonify({"ok": False, "error": d.get("errorDescription", "오류")})
+
+        elif service == '2captcha':
+            key = ak.get('twocaptcha_api_key', '').strip()
+            if not key:
+                return jsonify({"ok": False, "error": "API 키 미설정"})
+            r = _req.get(
+                "https://2captcha.com/res.php",
+                params={"key": key, "action": "getbalance", "json": 1},
+                timeout=10,
+            )
+            d = r.json()
+            if d.get("status") == 1:
+                return jsonify({"ok": True, "balance": d.get("request", 0)})
+            return jsonify({"ok": False, "error": d.get("request", "오류")})
+
+        elif service == 'anticaptcha':
+            key = ak.get('anticaptcha_api_key', '').strip()
+            if not key:
+                return jsonify({"ok": False, "error": "API 키 미설정"})
+            r = _req.post(
+                "https://api.anti-captcha.com/getBalance",
+                json={"clientKey": key},
+                timeout=10,
+            )
+            d = r.json()
+            if d.get("errorId") == 0:
+                return jsonify({"ok": True, "balance": d.get("balance", 0)})
+            return jsonify({"ok": False, "error": d.get("errorDescription", "오류")})
+
+        elif service == 'ezcaptcha':
+            key = ak.get('ezcaptcha_api_key', '').strip()
+            if not key:
+                return jsonify({"ok": False, "error": "API 키 미설정"})
+            r = _req.post(
+                "https://api.ez-captcha.com/getBalance",
+                json={"clientKey": key},
+                timeout=10,
+            )
+            d = r.json()
+            if d.get("errorId") == 0:
+                return jsonify({"ok": True, "balance": d.get("balance", 0)})
+            return jsonify({"ok": False, "error": d.get("errorDescription", "오류")})
+
+        elif service == 'nopecha':
+            key = ak.get('nopecha_api_key', '').strip()
+            if not key:
+                return jsonify({"ok": False, "error": "API 키 미설정"})
+            # NopeCHA: key 유효성 + 남은 크레딧 확인
+            r = _req.get(
+                "https://api.nopecha.com",
+                params={"key": key},
+                timeout=10,
+            )
+            d = r.json()
+            if d.get("status") == 0:
+                data_info = d.get("data", {})
+                credits = data_info.get("credits", "N/A") if isinstance(data_info, dict) else "OK"
+                return jsonify({"ok": True, "balance": credits})
+            return jsonify({"ok": False, "error": f"status={d.get('status')} {d.get('data','')}"})
+
+        return jsonify({"ok": False, "error": "알 수 없는 서비스"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+# ── AI 엔진 상태 확인 API ──────────────────────────────────────────
+@app.route('/api/ai_engine/status', methods=['GET'])
+def ai_engine_status():
+    settings = load_settings()
+    from engines.ai_engine import get_engine
+    engine = get_engine(settings)
+    if engine is None:
+        return jsonify({"enabled": False, "ok": False, "message": "AI 엔진이 비활성화 상태입니다."})
+    try:
+        result = engine.check_available()
+        result["enabled"] = True
+        result["engine_type"] = settings.get("ai_engine_type", "ollama")
+        result["model"] = settings.get("ai_model", "")
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"enabled": True, "ok": False, "message": str(e)})
+
+
+@app.route('/api/ai_engine/models', methods=['GET'])
+def ai_engine_models():
+    """Ollama에 설치된 모델 목록 반환 (비전 지원 여부 포함)"""
+    settings = load_settings()
+    ollama_url = settings.get('ai_ollama_url', 'http://localhost:11434').rstrip('/')
+    # 비전(멀티모달) 지원 패밀리
+    VISION_FAMILIES = {'gemma4', 'llava', 'llava-llama3', 'llava-phi3', 'moondream', 'bakllava', 'minicpm-v'}
+    try:
+        import urllib.request, json as _json
+        req = urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=4)
+        data = _json.loads(req.read())
+        models = []
+        for m in data.get('models', []):
+            families = m.get('details', {}).get('families') or []
+            family = m.get('details', {}).get('family', '')
+            all_families = set(families) | {family}
+            has_vision = bool(all_families & VISION_FAMILIES)
+            models.append({
+                'name': m['name'],
+                'size': m.get('size', 0),
+                'param_size': m.get('details', {}).get('parameter_size', ''),
+                'family': family,
+                'has_vision': has_vision,
+            })
+        return jsonify({'ok': True, 'models': models})
+    except Exception as e:
+        return jsonify({'ok': False, 'models': [], 'message': str(e)})
+
+
+# Google Drive 상태 확인 API
+@app.route('/api/gdrive/status', methods=['GET'])
+def gdrive_status():
+    from services import gdrive_uploader
+    ready = gdrive_uploader.is_ready()
+    has_creds = gdrive_uploader.CREDENTIALS_FILE.exists()
+    return jsonify({
+        "ready": ready,
+        "has_credentials": has_creds,
+        "has_token": gdrive_uploader.TOKEN_FILE.exists(),
+        "setup_path": str(gdrive_uploader.BASE_DIR / 'setup_gdrive.py'),
+    })
+
+
+# Google Drive 수동 업로드 API
+@app.route('/api/gdrive/upload', methods=['POST'])
+async def gdrive_upload():
+    from services import gdrive_uploader
+    data = request.json or {}
+    session_id = data.get('session_id')
+    folder = data.get('folder') or 'JepumScraper 상세이미지'
+
+    if not gdrive_uploader.is_ready():
+        return jsonify({"success": False, "error": "Google Drive 미연결 (setup_gdrive.py 실행 필요)"}), 400
+
+    # 세션에서 캡처된 이미지 목록 가져오기
+    session_data = user_sessions.get(session_id) if session_id else None
+    if not session_data:
+        return jsonify({"success": False, "error": "세션 없음 — 먼저 검색/캡처를 실행하세요"}), 400
+
+    last_scraped = session_data.get('last_scraped_data') or {}
+    if not last_scraped:
+        return jsonify({"success": False, "error": "캡처된 이미지 없음"}), 400
+
+    keyword = session_data.get('source_name', 'unknown')
+
+    import asyncio as _asyncio
+    loop = _asyncio.get_event_loop()
+    uploaded = 0
+    errors = []
+
+    for product_id, detail in last_scraped.items():
+        screenshots = detail.get('screenshots') or []
+        if not screenshots:
+            continue
+        product_title = detail.get('title', '')
+        product_platform = detail.get('platform', '')
+        seller_name = detail.get('seller_name', '') or product_platform
+        product_url = detail.get('product_url', '')
+        try:
+            ids = await loop.run_in_executor(
+                None,
+                gdrive_uploader.upload_multiple,
+                screenshots,
+                keyword,
+                product_id,
+                folder,
+                product_title,
+                product_platform,
+                seller_name,
+                product_url,
+            )
+            uploaded += len(ids)
+        except Exception as e:
+            errors.append(str(e))
+            logging.warning(f"[GDrive] 수동 업로드 실패 {product_id}: {e}")
+
+    logging.info(f"[GDrive] 수동 업로드 완료: {uploaded}개, 오류: {len(errors)}개")
+    return jsonify({
+        "success": True,
+        "uploaded": uploaded,
+        "errors": errors,
+        "folder": folder,
+    })
 
 # 검색 API
 @app.route('/api/search', methods=['POST'])
@@ -984,6 +1266,54 @@ async def search():
     progress_store.set_status(f"온라인 쇼핑몰 검색을 시작합니다...", session_id)
 
     settings = load_settings()
+
+    # ── AI 엔진: 검색어 최적화 (검색 전 1회) ──────────────────────
+    actual_keyword = product_name
+    ai_keywords = []
+    # AI 동작 보고서 (review 페이지에 표시)
+    _ai_report = {
+        "enabled": bool(settings.get("ai_engine_enabled")),
+        "engine_type": settings.get("ai_engine_type", "ollama"),
+        "model": settings.get("ai_model", ""),
+        "keyword_opt": {
+            "original": product_name,
+            "result": product_name,
+            "keywords": [],
+            "changed": False,
+            "success": False,
+        },
+        "reranking": {
+            "enabled": bool(settings.get("ai_use_ranking")),
+            "top_n": int(settings.get("ai_ranking_top_n") or 20),
+            "done": False,
+            "count": 0,
+            "success": False,
+        },
+    }
+    if settings.get("ai_engine_enabled") and settings.get("ai_use_keywords"):
+        try:
+            from engines.ai_engine import get_engine, optimize_keyword
+            _ai_engine = get_engine(settings)
+            if _ai_engine:
+                progress_store.set_status("AI가 최적 검색어를 분석 중...", session_id)
+                _loop = asyncio.get_event_loop()
+                ai_keywords = await _loop.run_in_executor(
+                    None, optimize_keyword, _ai_engine, save_path, product_name
+                )
+                if ai_keywords:
+                    actual_keyword = ai_keywords[0]  # 첫 번째 키워드를 주 검색어로 사용
+                    logging.info(f"[{session_id}] AI 키워드 최적화: {product_name} → {ai_keywords}")
+                    progress_store.set_status(f"AI 검색어: {actual_keyword}", session_id)
+                    _ai_report["keyword_opt"].update({
+                        "result": actual_keyword,
+                        "keywords": ai_keywords,
+                        "changed": actual_keyword != product_name,
+                        "success": True,
+                    })
+        except Exception as _ae:
+            logging.warning(f"[{session_id}] AI 키워드 최적화 실패 (원래 키워드 사용): {_ae}")
+            _ai_report["keyword_opt"]["error"] = str(_ae)[:120]
+
     adaptive_learning.log_event(
         job_id=session_id,
         stage="search",
@@ -991,9 +1321,9 @@ async def search():
         method="start",
         status="started",
         success=True,
-        metadata={"keyword": product_name},
+        metadata={"keyword": actual_keyword, "original_keyword": product_name, "ai_keywords": ai_keywords},
     )
-    raw_results = await search_service.search_all_platforms(product_name, settings, job_id=session_id)
+    raw_results = await search_service.search_all_platforms(actual_keyword, settings, job_id=session_id)
 
     if not raw_results:
         adaptive_learning.log_event(
@@ -1028,18 +1358,43 @@ async def search():
 
     logging.info(f"[{session_id}] 전체 후보 {len(scored_results)}개 정렬 완료")
 
+    # ── AI 엔진: 후보 재랭킹 (선택적, 느림) ──────────────────────
+    if settings.get("ai_engine_enabled") and settings.get("ai_use_ranking"):
+        try:
+            from engines.ai_engine import get_engine, rerank_candidates
+            _ai_engine = get_engine(settings)
+            if _ai_engine:
+                top_n = int(settings.get("ai_ranking_top_n") or 20)
+                actual_top_n = min(top_n, len(scored_results))
+                progress_store.set_status(f"AI가 상위 {actual_top_n}개 후보를 재평가 중...", session_id)
+                _loop = asyncio.get_event_loop()
+                scored_results = await _loop.run_in_executor(
+                    None, rerank_candidates, _ai_engine, save_path, scored_results, top_n, product_name
+                )
+                logging.info(f"[{session_id}] AI 재랭킹 완료")
+                _ai_report["reranking"].update({
+                    "done": True,
+                    "count": actual_top_n,
+                    "success": True,
+                })
+        except Exception as _ae:
+            logging.warning(f"[{session_id}] AI 재랭킹 실패 (기존 순서 유지): {_ae}")
+            _ai_report["reranking"]["error"] = str(_ae)[:120]
+
     # ── match_service: 전체 후보 기준으로 tier 분류 ──
     # CLIP 모델은 첫 매칭 시점에 지연 로드한다.
     from services.match_service import MatchService
-    categorized = MatchService().classify_matches(save_path, product_name, scored_results)
+    categorized = MatchService().classify_matches(save_path, actual_keyword, scored_results)
 
     all_products = {p.id: p for plist in categorized.values() for p in plist}
     all_candidates = _sort_products_by_score(list(all_products.values()))
     top_candidates = all_candidates[:10]
     total = len(all_products)
 
-    # 검색 보고서 추가
+    # 검색 보고서 추가 (AI 동작 내역 포함)
     search_report = search_service.last_report
+    if search_report is not None:
+        search_report["ai_report"] = _ai_report
 
     session_data = {
         "source_image": save_path,
@@ -1326,6 +1681,29 @@ async def scrape_details():
                 detail_result,
                 detail_result.get("status", "success"),
             )
+            # Google Drive 자동 업로드
+            _cur_settings = load_settings()
+            if _cur_settings.get('gdrive_enabled', False):
+                try:
+                    from services import gdrive_uploader
+                    import asyncio as _asyncio
+                    _loop = _asyncio.get_event_loop()
+                    _kw = user_sessions.get(session_id, {}).get("source_name", "unknown")
+                    await _loop.run_in_executor(
+                        None,
+                        gdrive_uploader.upload_multiple,
+                        detail_result["screenshots"],
+                        _kw,
+                        product.id,
+                        _cur_settings.get('gdrive_folder', 'JepumScraper 상세이미지'),
+                        getattr(product, 'title', ''),
+                        getattr(product, 'platform', ''),
+                        getattr(product, 'seller_name', '') or getattr(product, 'platform', ''),
+                        getattr(product, 'product_url', ''),
+                    )
+                    logging.info(f"[GDrive] 업로드 완료: {product.id} ({len(detail_result['screenshots'])}개)")
+                except Exception as _gde:
+                    logging.warning(f"[GDrive] 업로드 중 예외: {_gde}")
 
         # 네이버 상품 캡처 실패 시 자동으로 브라우저 탭 열기
         if False and is_naver and not detail_result.get("screenshots"):
@@ -1352,6 +1730,7 @@ async def scrape_details():
             if pid in all_products:
                 d['title'] = all_products[pid].title
                 d['platform'] = all_products[pid].platform
+                d['seller_name'] = getattr(all_products[pid], 'seller_name', '') or all_products[pid].platform
                 d['product_url'] = _normalize_detail_url(all_products[pid].product_url)
             capture_ok = bool(d.get("screenshots")) and is_detail_result_usable(d)
             d["capture_success"] = capture_ok
@@ -1360,6 +1739,7 @@ async def scrape_details():
                     "product_id": pid,
                     "title": d.get("title", pid),
                     "platform": d.get("platform", ""),
+                    "seller_name": d.get("seller_name", ""),
                     "status": d.get("status", "failed"),
                     "method": d.get("method", ""),
                     "reason": d.get("reason") or d.get("error") or d.get("status", "failed"),
@@ -1637,6 +2017,7 @@ def select_folder():
 def save_local_images():
     import shutil
     import glob
+    from services.gdrive_uploader import build_detail_filename
     data = request.json
     session_id = data.get('session_id')
     product_ids = data.get('product_ids', [])
@@ -1650,22 +2031,45 @@ def save_local_images():
         
     try:
         os.makedirs(target_dir, exist_ok=True)
+        session_data = user_sessions.get(session_id, {}) if session_id else {}
+        last_scraped = session_data.get('last_scraped_data') or {}
+        keyword = session_data.get('source_name', 'unknown')
         count = 0
         for pid in product_ids:
             product_detail_dir = os.path.join(config.DETAIL_DIR, str(pid))
             if not os.path.exists(product_detail_dir):
                 continue
                 
-            files_to_copy = glob.glob(os.path.join(product_detail_dir, "*.jpg"))
-            for f in files_to_copy:
-                filename = os.path.basename(f)
-                safe_id = str(pid).replace(":", "_").replace("/", "_")
-                if not filename.startswith(safe_id):
-                    target_filename = f"{safe_id}_{filename}"
-                else:
-                    target_filename = filename
-                    
+            files_to_copy = []
+            for pattern in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
+                files_to_copy.extend(glob.glob(os.path.join(product_detail_dir, pattern)))
+            files_to_copy = sorted(set(files_to_copy))
+            detail = last_scraped.get(pid, {}) if isinstance(last_scraped, dict) else {}
+            title = detail.get('title') or str(pid)
+            platform = detail.get('platform', '')
+            seller_name = detail.get('seller_name', '') or platform
+            product_url = detail.get('product_url', '')
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+
+            for idx, f in enumerate(files_to_copy, start=1):
+                target_filename = build_detail_filename(
+                    f,
+                    keyword=keyword,
+                    title=title,
+                    platform=platform,
+                    seller_name=seller_name,
+                    product_id=str(pid),
+                    product_url=product_url,
+                    index=idx,
+                    total=len(files_to_copy),
+                    timestamp=timestamp,
+                )
                 target_path = os.path.join(target_dir, target_filename)
+                base, ext = os.path.splitext(target_filename)
+                duplicate_idx = 2
+                while os.path.exists(target_path):
+                    target_path = os.path.join(target_dir, f"{base}_{duplicate_idx}{ext}")
+                    duplicate_idx += 1
                 shutil.copy2(f, target_path)
                 count += 1
                 
@@ -1736,6 +2140,7 @@ def export_job_results(job_id):
         )
         p.match_tier = r['match_tier']
         p.local_thumbnail_path = r['thumbnail_path']
+        p.seller_name = r.get('seller_name', '') or r['platform']
         products.append(p)
         
         detail_path = r['detail_path']
@@ -1755,6 +2160,110 @@ def export_job_results(job_id):
 @app.route('/report')
 def report_page():
     return render_template('report.html')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  배치 자동화 라우트
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/batch')
+def batch_page_new():
+    """새 배치 작업 생성 페이지"""
+    return render_template('batch.html', batch=None)
+
+
+@app.route('/batch/<batch_id>')
+def batch_page(batch_id):
+    """배치 작업 상세/진행 페이지"""
+    job = batch_manager.get_job(batch_id)
+    if not job:
+        return "배치 작업을 찾을 수 없습니다.", 404
+    return render_template('batch.html', batch=job.to_dict())
+
+
+@app.route('/api/batch', methods=['POST'])
+def api_batch_create():
+    """배치 작업 생성"""
+    company_name = request.form.get('company_name', '').strip()
+    product_name = request.form.get('product_name', '').strip()
+    product_type = request.form.get('product_type', '').strip()
+    keywords_json = request.form.get('keywords', '[]')
+    auto_select = request.form.get('auto_select', 'all').strip() or 'all'
+    scrape_details = request.form.get('scrape_details', '1') not in ('0', 'false', 'False')
+    output_gdrive = request.form.get('output_gdrive', '1') not in ('0', 'false', 'False')
+    output_local_dir = request.form.get('output_local_dir', '').strip()
+
+    if not product_name:
+        return jsonify({"error": "제품명을 입력해주세요."}), 400
+
+    try:
+        keywords = json.loads(keywords_json)
+        if not isinstance(keywords, list) or not keywords:
+            return jsonify({"error": "키워드를 하나 이상 입력해주세요."}), 400
+    except Exception:
+        return jsonify({"error": "키워드 형식이 올바르지 않습니다."}), 400
+
+    # 이미지 저장
+    image_path = ''
+    file = request.files.get('image')
+    if file and file.filename:
+        ext = Path(file.filename).suffix or '.jpg'
+        img_id = str(uuid.uuid4())
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], f"batch_{img_id}{ext}")
+        file.save(image_path)
+
+    batch_id = batch_manager.create_job(
+        company_name=company_name,
+        product_name=product_name,
+        product_type=product_type,
+        image_path=image_path,
+        keywords=keywords,
+        auto_select=auto_select,
+        scrape_details=scrape_details,
+        output_gdrive=output_gdrive,
+        output_local_dir=output_local_dir,
+    )
+    return jsonify({"ok": True, "batch_id": batch_id, "redirect": f"/batch/{batch_id}"})
+
+
+@app.route('/api/batch/<batch_id>/start', methods=['POST'])
+def api_batch_start(batch_id):
+    settings = load_settings()
+    ok = batch_manager.start_job(batch_id, settings)
+    if not ok:
+        return jsonify({"error": "배치 작업을 시작할 수 없습니다."}), 400
+    return jsonify({"ok": True, "status": "running"})
+
+
+@app.route('/api/batch/<batch_id>/pause', methods=['POST'])
+def api_batch_pause(batch_id):
+    ok = batch_manager.pause_job(batch_id)
+    return jsonify({"ok": ok, "status": "paused" if ok else "error"})
+
+
+@app.route('/api/batch/<batch_id>/resume', methods=['POST'])
+def api_batch_resume(batch_id):
+    ok = batch_manager.resume_job(batch_id)
+    return jsonify({"ok": ok, "status": "running" if ok else "error"})
+
+
+@app.route('/api/batch/<batch_id>/cancel', methods=['POST'])
+def api_batch_cancel(batch_id):
+    ok = batch_manager.cancel_job(batch_id)
+    return jsonify({"ok": ok, "status": "cancelled" if ok else "error"})
+
+
+@app.route('/api/batch/<batch_id>/status', methods=['GET'])
+def api_batch_status(batch_id):
+    job = batch_manager.get_job(batch_id)
+    if not job:
+        return jsonify({"error": "배치 작업을 찾을 수 없습니다."}), 404
+    return jsonify(job.to_dict())
+
+
+@app.route('/api/batch', methods=['GET'])
+def api_batch_list():
+    return jsonify({"batches": batch_manager.list_jobs()})
 
 
 if __name__ == '__main__':

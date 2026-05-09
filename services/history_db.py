@@ -1,6 +1,6 @@
-import os
 import sqlite3
 import json
+import os
 from datetime import datetime
 import config
 
@@ -39,10 +39,15 @@ def init_db():
             product_url TEXT,
             thumbnail_path TEXT,
             detail_path TEXT,
+            seller_name TEXT,
             match_tier INTEGER,
             FOREIGN KEY(job_id) REFERENCES crawling_jobs(id)
         )
     ''')
+    try:
+        c.execute('ALTER TABLE crawling_results ADD COLUMN seller_name TEXT')
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -81,8 +86,8 @@ def add_result(job_id: str, result: dict):
     c.execute('''
         INSERT INTO crawling_results (
             job_id, platform, product_id, title, price, product_url, 
-            thumbnail_path, detail_path, match_tier
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            thumbnail_path, detail_path, seller_name, match_tier
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         job_id,
         result.get('platform', ''),
@@ -92,6 +97,7 @@ def add_result(job_id: str, result: dict):
         result.get('product_url', ''),
         result.get('thumbnail_path', ''),
         result.get('detail_path', ''),
+        result.get('seller_name', ''),
         result.get('match_tier', 0)
     ))
     conn.commit()

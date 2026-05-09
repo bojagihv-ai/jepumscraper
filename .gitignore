@@ -11,3 +11,19 @@ akamai_cookies/
 *.db
 *.xlsx
 *.log
+
+# 서버 로그
+srv_stdout.txt
+srv_stderr.txt
+
+# Google OAuth 자격증명 (보안)
+credentials.json
+token.json
+token*.json
+
+# 배치 작업 결과 (로컬 데이터)
+batch_jobs/
+
+# 개발/테스트 스크립트
+test_*.py
+patch_*.py

@@ -254,3 +254,37 @@ def get_advanced_stealth_script(
 def get_full_stealth_script(timezone: str = "Asia/Seoul") -> str:
     """기본 + 고급 스텔스를 합친 완전한 JS 스크립트."""
     return get_stealth_script() + "\n\n" + get_advanced_stealth_script(timezone=timezone)
+
+
+def apply_stealth_to_page(page) -> None:
+    """
+    Playwright 페이지에 playwright-stealth 라이브러리 + 자체 JS 스텔스를 동시에 적용한다.
+
+    playwright-stealth: navigator.webdriver, chrome runtime, permissions 등 40+ 항목 패치
+    자체 stealth.py:    WebGL 렌더러, Canvas 노이즈, AudioContext, Font 등 추가 위장
+    두 레이어를 함께 쓰면 탐지 우회 확률이 크게 높아진다.
+    """
+    # 1) playwright-stealth 라이브러리 패치 (우선 적용)
+    try:
+        from playwright_stealth import stealth_sync
+        stealth_sync(page)
+    except ImportError:
+        pass  # 미설치 시 자체 JS만으로 동작
+
+    # 2) 자체 스텔스 JS 추가 주입 (WebGL·Canvas·Audio 위장)
+    try:
+        page.add_init_script(get_full_stealth_script())
+    except Exception:
+        pass  # 이미 초기화된 페이지면 skip
+
+
+def apply_stealth_to_context(context) -> None:
+    """
+    Playwright BrowserContext 단위로 스텔스를 적용한다.
+    context.new_page() 로 생성되는 모든 페이지에 자동 적용된다.
+    """
+    # 자체 JS는 context 레벨로 주입 (모든 페이지에 자동 적용)
+    try:
+        context.add_init_script(get_full_stealth_script())
+    except Exception:
+        pass

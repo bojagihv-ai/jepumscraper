@@ -21,6 +21,7 @@ Akamai _abck 쿠키 검증 로직:
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -48,6 +49,18 @@ _TTL = {
 
 CACHE_DIR = Path(__file__).parent.parent / 'data' / 'bypass_cache'
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Playwright 전용 스레드풀 — sync_playwright 가 asyncio 이벤트 루프와
+# 충돌하지 않도록 항상 별도 스레드에서 실행한다.
+_PW_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=2, thread_name_prefix="bypass-pw"
+)
+
+
+def _run_in_thread(fn, *args, timeout: float = 90, **kwargs):
+    """동기 Playwright 작업을 별도 스레드에서 실행한다."""
+    future = _PW_EXECUTOR.submit(fn, *args, **kwargs)
+    return future.result(timeout=timeout)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -94,12 +107,25 @@ def is_blocked(html: str, status_code: int = 200) -> bool:
         return True
     low = html.lower()
     return any(k in low for k in [
+        # 영문 차단 패턴
         'access denied', 'access is denied',
         'just a moment', 'checking your browser',
         'please wait', 'human verification',
         'captcha', 'robot', 'bot detection',
+        'ddos protection', 'security check',
+        'your ip has been blocked', 'ip blocked',
+        'too many requests', 'rate limit',
+        'forbidden', 'enable javascript',
+        # 한국어 차단 패턴
         '비정상적인 접근', '자동화된 요청',
         '쇼핑 서비스 접속이 일시적으로 제한',
+        '비정상적인 방법으로', '자동화 프로그램',
+        '비정상 접근', '접근이 차단', '차단되었습니다',
+        '잠시 후 다시', '일시적으로 차단',
+        '보안 문자를 입력', '본인 확인',
+        '사람인지 확인', '로봇이 아님을 확인',
+        '서비스 이용이 일시 중단', '접속이 제한',
+        '정상적인 방법으로', '비정상적으로 많은',
     ]) or len(html) < 1000
 
 
@@ -219,13 +245,12 @@ def acquire_akamai_cookies(url: str, proxy: Optional[str] = None,
 
     try:
         from playwright.sync_api import sync_playwright
-        from engine.stealth import get_full_stealth_script
+        from engine.stealth import apply_stealth_to_context, apply_stealth_to_page
         from engine.human_behavior import HumanBehavior
     except ImportError as e:
         logger.error('[Akamai] 필수 모듈 없음: %s', e)
         return {}
 
-    stealth_js = get_full_stealth_script()
     cookies_result = {}
     sensor_data_sent = [False]
     abck_validated = [False]
@@ -252,14 +277,14 @@ def acquire_akamai_cookies(url: str, proxy: Optional[str] = None,
                 user_agent=(
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/124.0.0.0 Safari/537.36'
+                    'Chrome/136.0.0.0 Safari/537.36'
                 ),
                 locale='ko-KR',
                 timezone_id='Asia/Seoul',
                 extra_http_headers={
                     'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="124", "Google Chrome";v="124"',
+                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="136", "Google Chrome";v="136"',
                     'sec-ch-ua-mobile': '?0',
                     'sec-ch-ua-platform': '"Windows"',
                     'sec-fetch-dest': 'document',
@@ -269,10 +294,10 @@ def acquire_akamai_cookies(url: str, proxy: Optional[str] = None,
                     'upgrade-insecure-requests': '1',
                 },
             )
+            # ── playwright-stealth + 자체 JS 이중 적용 ──
+            apply_stealth_to_context(context)
             page = context.new_page()
-
-            # 스텔스 스크립트 주입
-            page.add_init_script(stealth_js)
+            apply_stealth_to_page(page)
 
             # ── 네트워크 요청 모니터링 ──
             def on_request(request):
@@ -322,7 +347,10 @@ def acquire_akamai_cookies(url: str, proxy: Optional[str] = None,
 
             browser.close()
 
-    _do_playwright()
+    try:
+        _run_in_thread(_do_playwright)
+    except concurrent.futures.TimeoutError:
+        logger.warning('[Akamai] Playwright 스레드 타임아웃')
 
     if cookies_result:
         _set_cached(domain, protection, cookies_result)
@@ -339,6 +367,8 @@ def _behavior_loop(page, sensor_data_sent: list, validated: list,
     import time
     deadline = time.time() + max_secs
     phase = 0
+    # 마우스 현재 위치를 자체 변수로 추적 (page._mouse_pos 비공개 속성 미사용)
+    _mouse_x, _mouse_y = 960, 540
 
     while time.time() < deadline:
         # 검증 완료 시 즉시 탈출
@@ -351,9 +381,9 @@ def _behavior_loop(page, sensor_data_sent: list, validated: list,
 
         if phase == 0:
             # 랜덤 마우스 이동
-            x = random.randint(int(w * 0.2), int(w * 0.8))
-            y = random.randint(int(h * 0.2), int(h * 0.8))
-            page.mouse.move(x, y)
+            _mouse_x = random.randint(int(w * 0.2), int(w * 0.8))
+            _mouse_y = random.randint(int(h * 0.2), int(h * 0.8))
+            page.mouse.move(_mouse_x, _mouse_y)
             time.sleep(random.uniform(0.15, 0.4))
 
         elif phase == 1:
@@ -371,13 +401,9 @@ def _behavior_loop(page, sensor_data_sent: list, validated: list,
         elif phase == 3:
             # 마우스 미세 이동 (손 떨림 모방)
             for _ in range(random.randint(3, 8)):
-                dx = random.gauss(0, 3)
-                dy = random.gauss(0, 3)
-                cur = page._mouse_pos if hasattr(page, '_mouse_pos') else (w//2, h//2)
-                page.mouse.move(
-                    max(10, min(w-10, cur[0] + dx)),
-                    max(10, min(h-10, cur[1] + dy)),
-                )
+                _mouse_x = max(10, min(w - 10, int(_mouse_x + random.gauss(0, 3))))
+                _mouse_y = max(10, min(h - 10, int(_mouse_y + random.gauss(0, 3))))
+                page.mouse.move(_mouse_x, _mouse_y)
                 time.sleep(random.uniform(0.02, 0.08))
 
         phase = (phase + 1) % 4
@@ -423,69 +449,72 @@ def acquire_datadome_cookie(url: str, proxy: Optional[str] = None,
 
     try:
         from playwright.sync_api import sync_playwright
-        from engine.stealth import get_full_stealth_script
+        from engine.stealth import apply_stealth_to_context, apply_stealth_to_page
     except ImportError as e:
         logger.error('[DataDome] 필수 모듈 없음: %s', e)
         return None
 
-    stealth_js = get_full_stealth_script()
     dd_cookie = [None]
 
-    with sync_playwright() as pw:
-        launch_opts = {'headless': True, 'args': [
-            '--no-sandbox', '--disable-dev-shm-usage',
-            '--disable-blink-features=AutomationControlled',
-            '--lang=ko-KR', '--window-size=1920,1080',
-        ]}
-        if proxy:
-            launch_opts['proxy'] = {'server': proxy}
+    def _do_datadome():
+        with sync_playwright() as pw:
+            launch_opts = {'headless': True, 'args': [
+                '--no-sandbox', '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--lang=ko-KR', '--window-size=1920,1080',
+            ]}
+            if proxy:
+                launch_opts['proxy'] = {'server': proxy}
 
-        browser = pw.chromium.launch(**launch_opts)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent=(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/124.0.0.0 Safari/537.36'
-            ),
-            locale='ko-KR', timezone_id='Asia/Seoul',
-        )
-        page = context.new_page()
-        page.add_init_script(stealth_js)
+            browser = pw.chromium.launch(**launch_opts)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=(
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/136.0.0.0 Safari/537.36'
+                ),
+                locale='ko-KR', timezone_id='Asia/Seoul',
+            )
+            apply_stealth_to_context(context)
+            page = context.new_page()
+            apply_stealth_to_page(page)
 
-        # 응답에서 datadome 쿠키 실시간 추출
-        def on_response(response):
-            sc = response.headers.get('set-cookie', '')
-            m = re.search(r'datadome=([^;]+)', sc)
-            if m:
-                dd_cookie[0] = m.group(1)
-                logger.debug('[DataDome] 쿠키 감지: %s…', m.group(1)[:20])
+            def on_response(response):
+                sc = response.headers.get('set-cookie', '')
+                m = re.search(r'datadome=([^;]+)', sc)
+                if m:
+                    dd_cookie[0] = m.group(1)
+                    logger.debug('[DataDome] 쿠키 감지: %s…', m.group(1)[:20])
 
-        page.on('response', on_response)
+            page.on('response', on_response)
 
-        try:
-            page.goto(url, wait_until='domcontentloaded', timeout=25000)
-        except Exception:
-            pass
+            try:
+                page.goto(url, wait_until='domcontentloaded', timeout=25000)
+            except Exception:
+                pass
 
-        # 챌린지 해결 대기 (최대 15초)
-        for _ in range(30):
-            if dd_cookie[0]:
-                break
-            # 브라우저 쿠키 직접 확인
-            for c in context.cookies():
-                if c['name'] == 'datadome':
-                    dd_cookie[0] = c['value']
+            # 챌린지 해결 대기 (최대 25초로 연장)
+            for _ in range(50):
+                if dd_cookie[0]:
                     break
-            if not dd_cookie[0]:
-                # 인간 행동으로 챌린지 유발
-                page.mouse.move(
-                    random.randint(300, 900), random.randint(200, 600)
-                )
-                page.mouse.wheel(0, random.randint(100, 300))
-                time.sleep(0.5)
+                for c in context.cookies():
+                    if c['name'] == 'datadome':
+                        dd_cookie[0] = c['value']
+                        break
+                if not dd_cookie[0]:
+                    page.mouse.move(
+                        random.randint(300, 900), random.randint(200, 600)
+                    )
+                    page.mouse.wheel(0, random.randint(100, 300))
+                    time.sleep(0.5)
 
-        browser.close()
+            browser.close()
+
+    try:
+        _run_in_thread(_do_datadome)
+    except concurrent.futures.TimeoutError:
+        logger.warning('[DataDome] Playwright 스레드 타임아웃')
 
     if dd_cookie[0]:
         cookies = {'datadome': dd_cookie[0]}
@@ -518,69 +547,75 @@ def acquire_perimeterx_cookies(url: str, proxy: Optional[str] = None,
 
     try:
         from playwright.sync_api import sync_playwright
-        from engine.stealth import get_full_stealth_script
+        from engine.stealth import apply_stealth_to_context, apply_stealth_to_page
     except ImportError as e:
         logger.error('[PerimeterX] 필수 모듈 없음: %s', e)
         return {}
 
-    stealth_js = get_full_stealth_script()
     px_cookies = {}
     px_script_seen = [False]
 
-    with sync_playwright() as pw:
-        launch_opts = {'headless': True, 'args': [
-            '--no-sandbox', '--disable-dev-shm-usage',
-            '--disable-blink-features=AutomationControlled',
-            '--lang=ko-KR', '--window-size=1920,1080',
-        ]}
-        if proxy:
-            launch_opts['proxy'] = {'server': proxy}
+    def _do_perimeterx():
+        with sync_playwright() as pw:
+            launch_opts = {'headless': True, 'args': [
+                '--no-sandbox', '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--lang=ko-KR', '--window-size=1920,1080',
+            ]}
+            if proxy:
+                launch_opts['proxy'] = {'server': proxy}
 
-        browser = pw.chromium.launch(**launch_opts)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent=(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/124.0.0.0 Safari/537.36'
-            ),
-            locale='ko-KR', timezone_id='Asia/Seoul',
-        )
-        page = context.new_page()
-        page.add_init_script(stealth_js)
-
-        def on_request(request):
-            if 'px-cloud.net' in request.url or '_pxchallenge' in request.url:
-                px_script_seen[0] = True
-
-        page.on('request', on_request)
-
-        try:
-            page.goto(url, wait_until='domcontentloaded', timeout=25000)
-        except Exception:
-            pass
-
-        # PX 검증 대기 (최대 20초)
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            cookies = context.cookies()
-            px_found = {}
-            for c in cookies:
-                if c['name'].startswith('_px') or c['name'] in ('_pxhd', '_pxvid', '_pxff'):
-                    px_found[c['name']] = c['value']
-
-            if px_found:
-                px_cookies = px_found
-                logger.debug('[PerimeterX] 쿠키 감지: %s', list(px_found.keys()))
-                break
-
-            page.mouse.move(
-                random.randint(200, 800), random.randint(150, 600)
+            browser = pw.chromium.launch(**launch_opts)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=(
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/136.0.0.0 Safari/537.36'
+                ),
+                locale='ko-KR', timezone_id='Asia/Seoul',
             )
-            page.mouse.wheel(0, random.randint(100, 300))
-            time.sleep(0.6)
+            apply_stealth_to_context(context)
+            page = context.new_page()
+            apply_stealth_to_page(page)
 
-        browser.close()
+            def on_request(request):
+                if 'px-cloud.net' in request.url or '_pxchallenge' in request.url:
+                    px_script_seen[0] = True
+
+            page.on('request', on_request)
+
+            try:
+                page.goto(url, wait_until='domcontentloaded', timeout=25000)
+            except Exception:
+                pass
+
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                cookies = context.cookies()
+                px_found = {}
+                for c in cookies:
+                    if c['name'].startswith('_px') or c['name'] in ('_pxhd', '_pxvid', '_pxff'):
+                        px_found[c['name']] = c['value']
+
+                if px_found:
+                    nonlocal px_cookies
+                    px_cookies = px_found
+                    logger.debug('[PerimeterX] 쿠키 감지: %s', list(px_found.keys()))
+                    break
+
+                page.mouse.move(
+                    random.randint(200, 800), random.randint(150, 600)
+                )
+                page.mouse.wheel(0, random.randint(100, 300))
+                time.sleep(0.6)
+
+            browser.close()
+
+    try:
+        _run_in_thread(_do_perimeterx)
+    except concurrent.futures.TimeoutError:
+        logger.warning('[PerimeterX] Playwright 스레드 타임아웃')
 
     if px_cookies:
         _set_cached(domain, protection, px_cookies)
@@ -613,59 +648,105 @@ def acquire_cloudflare_cookies(url: str, proxy: Optional[str] = None,
 
     try:
         from playwright.sync_api import sync_playwright
-        from engine.stealth import get_full_stealth_script
+        from engine.stealth import apply_stealth_to_context, apply_stealth_to_page
     except ImportError as e:
         logger.error('[Cloudflare] 필수 모듈 없음: %s', e)
         return {}
 
-    stealth_js = get_full_stealth_script()
     cf_cookies = {}
 
-    with sync_playwright() as pw:
-        launch_opts = {'headless': True, 'args': [
-            '--no-sandbox', '--disable-dev-shm-usage',
-            '--disable-blink-features=AutomationControlled',
-            '--lang=ko-KR', '--window-size=1920,1080',
-        ]}
-        if proxy:
-            launch_opts['proxy'] = {'server': proxy}
+    def _do_cloudflare():
+        with sync_playwright() as pw:
+            launch_opts = {'headless': True, 'args': [
+                '--no-sandbox', '--disable-dev-shm-usage',
+                '--disable-blink-features=AutomationControlled',
+                '--lang=ko-KR', '--window-size=1920,1080',
+            ]}
+            if proxy:
+                launch_opts['proxy'] = {'server': proxy}
 
-        browser = pw.chromium.launch(**launch_opts)
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent=(
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/124.0.0.0 Safari/537.36'
-            ),
-            locale='ko-KR', timezone_id='Asia/Seoul',
-        )
-        page = context.new_page()
-        page.add_init_script(stealth_js)
+            browser = pw.chromium.launch(**launch_opts)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=(
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/136.0.0.0 Safari/537.36'
+                ),
+                locale='ko-KR', timezone_id='Asia/Seoul',
+            )
+            apply_stealth_to_context(context)
+            page = context.new_page()
+            apply_stealth_to_page(page)
 
-        try:
-            page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        except Exception:
-            pass
+            try:
+                page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            except Exception:
+                pass
 
-        # Cloudflare 챌린지 대기 (최대 30초)
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            title = page.title()
-            content = page.content()
+            # Cloudflare 챌린지 대기 (최대 35초)
+            deadline_cf = time.time() + 35
+            turnstile_attempted = False
+            while time.time() < deadline_cf:
+                try:
+                    title = page.title()
+                    content = page.content()
+                except Exception:
+                    break
 
-            # "Just a moment" 챌린지 페이지가 아니면 완료
-            if 'just a moment' not in title.lower() and 'checking your browser' not in content.lower():
-                break
+                is_challenge = (
+                    'just a moment' in title.lower()
+                    or 'checking your browser' in content.lower()
+                    or 'cf-challenge' in content.lower()
+                )
+                if not is_challenge:
+                    break
 
-            time.sleep(1.5)
+                # ── Turnstile 감지 시 API 서비스로 해결 시도 ──
+                if not turnstile_attempted and 'turnstile' in content.lower():
+                    turnstile_attempted = True
+                    try:
+                        import re as _re
+                        m = _re.search(r'data-sitekey=["\']([0-9a-zA-Z_\-]{10,})["\']', content)
+                        if m:
+                            site_key = m.group(1)
+                            logger.info('[Cloudflare] Turnstile 감지 → API 해결 시도: %s', site_key[:20])
+                            from engine.captcha import get_solver
+                            solver = get_solver()
+                            if solver.available():
+                                token = solver.solve_turnstile(site_key, url)
+                                if token:
+                                    import json as _json
+                                    safe_token = _json.dumps(token)
+                                    page.evaluate(f"""
+                                        (() => {{
+                                            const el = document.querySelector('[name="cf-turnstile-response"]');
+                                            if (el) el.value = {safe_token};
+                                            try {{
+                                                if (window.turnstile) turnstile.implicitRender();
+                                            }} catch(e) {{}}
+                                        }})();
+                                    """)
+                                    logger.info('[Cloudflare] Turnstile 토큰 주입 완료')
+                                    time.sleep(3)
+                                    continue
+                    except Exception as te:
+                        logger.warning('[Cloudflare] Turnstile API 실패: %s', te)
 
-        # 쿠키 추출
-        for c in context.cookies():
-            if c['name'] in ('cf_clearance', '__cf_bm', '__cflb', '_cfuvid'):
-                cf_cookies[c['name']] = c['value']
+                time.sleep(1.5)
 
-        browser.close()
+            # 쿠키 추출
+            nonlocal cf_cookies
+            for c in context.cookies():
+                if c['name'] in ('cf_clearance', '__cf_bm', '__cflb', '_cfuvid'):
+                    cf_cookies[c['name']] = c['value']
+
+            browser.close()
+
+    try:
+        _run_in_thread(_do_cloudflare, timeout=60)
+    except concurrent.futures.TimeoutError:
+        logger.warning('[Cloudflare] Playwright 스레드 타임아웃')
 
     if cf_cookies:
         _set_cached(domain, protection, cf_cookies)

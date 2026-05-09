@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JepumScraper × Google Drive 연동 가이드</title>
+<style>
+  /* system fonts */
+
+  :root {
+    --blue: #4285F4;
+    --red: #EA4335;
+    --yellow: #FBBC05;
+    --green: #34A853;
+    --dark: #1a1a2e;
+    --card: #ffffff;
+    --bg: #f0f4ff;
+    --text: #1e1e2e;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #667eea;
+    --accent2: #764ba2;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', '맑은 고딕', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+  }
+
+  /* ── 커버 ── */
+  .cover {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: white;
+    padding: 80px 40px 60px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 30% 50%, rgba(66,133,244,.25) 0%, transparent 60%),
+                radial-gradient(ellipse at 70% 30%, rgba(52,168,83,.15) 0%, transparent 50%);
+  }
+  .cover-inner { position: relative; max-width: 800px; margin: 0 auto; }
+  .google-logo {
+    display: inline-flex; gap: 6px; align-items: center;
+    font-size: 42px; font-weight: 900; letter-spacing: -1px; margin-bottom: 8px;
+  }
+  .g-b{color:#4285F4} .g-r{color:#EA4335} .g-y{color:#FBBC05}
+  .g-b2{color:#4285F4} .g-g{color:#34A853} .g-r2{color:#EA4335}
+  .cover h1 {
+    font-size: clamp(24px,4vw,38px); font-weight: 700; margin: 16px 0 8px;
+    background: linear-gradient(90deg,#a8edea,#fed6e3);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  }
+  .cover .sub {
+    font-size: 15px; color: rgba(255,255,255,.65); margin-bottom: 32px;
+  }
+  .badge-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .badge {
+    background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 20px; padding: 5px 14px; font-size: 13px;
+    backdrop-filter: blur(8px);
+  }
+
+  /* ── 본문 래퍼 ── */
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  /* ── TOC ── */
+  .toc {
+    background: white; border-radius: 16px; padding: 28px 32px;
+    margin-bottom: 48px; border: 1px solid var(--border);
+    box-shadow: 0 4px 24px rgba(0,0,0,.06);
+  }
+  .toc h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--accent); }
+  .toc ol { padding-left: 20px; }
+  .toc li { padding: 5px 0; font-size: 14px; color: var(--muted); }
+  .toc li strong { color: var(--text); }
+
+  /* ── 스텝 카드 ── */
+  .step {
+    background: white; border-radius: 20px; margin-bottom: 40px;
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 32px rgba(0,0,0,.07);
+    overflow: hidden;
+  }
+  .step-header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 24px 28px; border-bottom: 1px solid var(--border);
+  }
+  .step-num {
+    width: 48px; height: 48px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 18px; flex-shrink: 0;
+    color: white;
+  }
+  .step-title { font-size: 18px; font-weight: 700; }
+  .step-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .step-body { padding: 28px; }
+
+  /* ── 일러스트 박스 ── */
+  .illust {
+    background: #f8faff; border-radius: 14px; padding: 28px;
+    margin-bottom: 20px; border: 1px solid #e8edff;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 140px;
+  }
+
+  /* ── 안내 텍스트 ── */
+  .guide-list { list-style: none; }
+  .guide-list li {
+    display: flex; gap: 12px; padding: 10px 0;
+    border-bottom: 1px dashed #f0f0f0; font-size: 14px;
+  }
+  .guide-list li:last-child { border-bottom: none; }
+  .guide-list .icon {
+    width: 26px; height: 26px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-size: 13px;
+  }
+
+  /* ── 코드 블록 ── */
+  .code-block {
+    background: #1e1e2e; border-radius: 12px; padding: 18px 22px;
+    font-family: 'Consolas', 'Courier New', monospace; font-size: 13px;
+    color: #cdd6f4; overflow-x: auto; margin-top: 14px;
+    line-height: 1.8;
+  }
+  .code-block .kw { color: #89b4fa; }
+  .code-block .str { color: #a6e3a1; }
+  .code-block .cmt { color: #585b70; }
+  .code-block .key { color: #f38ba8; }
+  .code-block .val { color: #fab387; }
+
+  /* ── 경고/팁 박스 ── */
+  .tip {
+    border-radius: 12px; padding: 14px 18px; margin-top: 16px;
+    display: flex; gap: 12px; align-items: flex-start; font-size: 13.5px;
+  }
+  .tip.blue { background: #eff6ff; border-left: 4px solid #4285F4; }
+  .tip.green { background: #f0fdf4; border-left: 4px solid #34A853; }
+  .tip.orange { background: #fff7ed; border-left: 4px solid #FBBC05; }
+  .tip.red { background: #fef2f2; border-left: 4px solid #EA4335; }
+  .tip-icon { font-size: 18px; line-height: 1; }
+  .tip p { margin: 0; line-height: 1.6; color: #374151; }
+  .tip strong { color: #111827; }
+
+  /* ── 색상별 스텝 번호 ── */
+  .n1{background:linear-gradient(135deg,#4285F4,#1a73e8)}
+  .n2{background:linear-gradient(135deg,#34A853,#1e8e3e)}
+  .n3{background:linear-gradient(135deg,#FBBC05,#f29900)}
+  .n4{background:linear-gradient(135deg,#EA4335,#c5221f)}
+  .n5{background:linear-gradient(135deg,#667eea,#764ba2)}
+  .n6{background:linear-gradient(135deg,#f093fb,#f5576c)}
+  .n7{background:linear-gradient(135deg,#4facfe,#00f2fe)}
+  .n8{background:linear-gradient(135deg,#43e97b,#38f9d7)}
+  .n9{background:linear-gradient(135deg,#fa709a,#fee140)}
+
+  /* ── 폴더 구조 ── */
+  .folder-tree {
+    background: #1e1e2e; border-radius: 12px; padding: 20px 24px;
+    font-family: 'Consolas', 'Courier New', monospace; font-size: 13px;
+    color: #cdd6f4; margin-top: 14px; line-height: 2;
+  }
+  .folder-tree .dir { color: #89dceb; }
+  .folder-tree .file { color: #a6e3a1; }
+  .folder-tree .cmt { color: #585b70; font-size: 12px; }
+
+  /* ── 플로우 다이어그램 ── */
+  .flow {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 8px; margin: 16px 0;
+  }
+  .flow-item {
+    background: #f0f4ff; border: 1.5px solid #c7d2fe;
+    border-radius: 10px; padding: 8px 14px; font-size: 13px;
+    font-weight: 600; color: #4338ca;
+  }
+  .flow-arrow { color: #9ca3af; font-size: 18px; }
+
+  /* ── 완료 배너 ── */
+  .done-banner {
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    border-radius: 20px; padding: 32px; text-align: center;
+    margin-top: 48px; color: white;
+  }
+  .done-banner h2 { font-size: 26px; font-weight: 900; margin-bottom: 8px; }
+  .done-banner p { font-size: 15px; opacity: .9; }
+
+  /* ── 다운로드 버튼 ── */
+  .dl-wrap { text-align: center; margin-top: 32px; }
+  .dl-btn {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: linear-gradient(135deg,#667eea,#764ba2);
+    color: white; border: none; border-radius: 50px;
+    padding: 14px 32px; font-size: 16px; font-weight: 700;
+    cursor: pointer; text-decoration: none;
+    box-shadow: 0 8px 24px rgba(102,126,234,.4);
+    transition: transform .2s, box-shadow .2s;
+  }
+  .dl-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(102,126,234,.5); }
+
+  /* ── URL 태그 ── */
+  .url-tag {
+    display: inline-block; background: #1e1e2e; color: #89b4fa;
+    font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+    padding: 3px 10px; border-radius: 6px; word-break: break-all;
+  }
+
+  /* ── 스크린 mock ── */
+  .screen-mock {
+    border: 2px solid #e5e7eb; border-radius: 10px; overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,.1);
+  }
+  .screen-bar {
+    background: #f3f4f6; padding: 8px 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .screen-content { background: white; padding: 16px 20px; font-size: 13px; }
+
+  @media print {
+    .dl-wrap { display: none; }
+    body { background: white; }
+    .step { box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ 커버 ══════════════ -->
+<div class="cover">
+  <div class="cover-inner">
+    <div class="google-logo">
+      <span class="g-b">G</span><span class="g-r">o</span><span class="g-y">o</span><span class="g-b2">g</span><span class="g-g">l</span><span class="g-r2">e</span>
+      <span style="color:white;font-size:28px;margin:0 4px;">×</span>
+      <span style="color:#a8edea;">JepumScraper</span>
+    </div>
+
+    <!-- Google Drive SVG icon -->
+    <svg width="64" height="56" viewBox="0 0 87.3 78" style="margin:12px auto;display:block">
+      <path fill="#0066DA" d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H.1c0 1.55.4 3.1 1.2 4.5z"/>
+      <path fill="#00AC47" d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0-1.2 4.5h27.5z"/>
+      <path fill="#EA4335" d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 11.25z"/>
+      <path fill="#00832D" d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2H34.4c-1.6 0-3.15.45-4.5 1.2z"/>
+      <path fill="#2684FC" d="M59.8 53H32.5L18.75 76.8c1.35.8 2.9 1.2 4.5 1.2h45.3c1.6 0 3.15-.45 4.5-1.2z"/>
+      <path fill="#FFBA00" d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25 59.8 53h27.45c0-1.55-.4-3.1-1.2-4.5z"/>
+    </svg>
+
+    <h1>Google Drive 자동 업로드 연동<br>완전 가이드 A → Z</h1>
+    <p class="sub">JepumScraper 상세 캡처 이미지를 Google Drive에 자동 저장하는<br>전체 설정 과정을 처음부터 끝까지 정리합니다.</p>
+    <div class="badge-row">
+      <span class="badge">📅 2026-05-04 기준</span>
+      <span class="badge">🔑 OAuth 2.0 Desktop App</span>
+      <span class="badge">☁️ Google Drive API v3</span>
+      <span class="badge">🐍 Python google-api-python-client</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 본문 ══════════════ -->
+<div class="wrap">
+
+  <!-- 목차 -->
+  <div class="toc">
+    <h2>📋 목차</h2>
+    <ol class="guide-list" style="list-style:decimal;padding-left:20px">
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>Google Cloud Console</strong> — 프로젝트 생성</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>Google Drive API</strong> — 라이브러리에서 사용 설정</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>OAuth 동의 화면</strong> — 앱 등록 (테스트 모드)</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>테스트 사용자 추가</strong> — hsong7266@gmail.com</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>OAuth 클라이언트 ID 생성</strong> — 데스크톱 앱 타입</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>credentials.json 설치</strong> — C:\JepumScraper\ 에 배치</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>setup_gdrive.py 실행</strong> — 최초 OAuth 인증 & 토큰 저장</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>JepumScraper 설정</strong> — Drive 업로드 ON</li>
+      <li style="display:list-item;font-size:14px;padding:4px 0"><strong>자동 업로드 확인</strong> — 캡처 후 Drive 폴더 확인</li>
+    </ol>
+  </div>
+
+  <!-- ════ STEP 1 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n1">1</div>
+      <div>
+        <div class="step-title">Google Cloud Console — 프로젝트 생성</div>
+        <div class="step-sub">console.cloud.google.com 접속 → 새 프로젝트 만들기</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="120" viewBox="0 0 480 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- 브라우저 주소창 mock -->
+          <rect x="0" y="0" width="480" height="120" rx="12" fill="#f8fafc"/>
+          <rect x="10" y="10" width="460" height="28" rx="6" fill="#e2e8f0"/>
+          <rect x="20" y="16" width="8" height="8" rx="2" fill="#94a3b8"/>
+          <rect x="32" y="16" width="8" height="8" rx="2" fill="#94a3b8"/>
+          <rect x="44" y="16" width="8" height="8" rx="2" fill="#94a3b8"/>
+          <rect x="58" y="14" width="300" height="14" rx="3" fill="white"/>
+          <text x="62" y="24" font-size="9" fill="#4285F4" font-family="monospace">console.cloud.google.com</text>
+          <!-- 버튼 -->
+          <rect x="10" y="50" width="140" height="36" rx="8" fill="#4285F4"/>
+          <text x="36" y="73" font-size="11" fill="white" font-family="sans-serif">+ 새 프로젝트</text>
+          <!-- 화살표 -->
+          <text x="165" y="73" font-size="22" fill="#94a3b8">→</text>
+          <!-- 프로젝트 카드 -->
+          <rect x="195" y="48" width="270" height="40" rx="8" fill="white" stroke="#e2e8f0" stroke-width="1.5"/>
+          <text x="210" y="62" font-size="10" fill="#6b7280" font-family="sans-serif">프로젝트 이름</text>
+          <text x="210" y="78" font-size="12" font-weight="bold" fill="#1e293b" font-family="sans-serif">bustling-tuner-495303-j1</text>
+        </svg>
+      </div>
+      <ul class="guide-list">
+        <li>
+          <span class="icon" style="background:#eff6ff">🌐</span>
+          <div>브라우저에서 <span class="url-tag">https://console.cloud.google.com</span> 접속</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">📁</span>
+          <div>상단 <strong>"프로젝트 선택"</strong> 드롭다운 → <strong>"새 프로젝트"</strong> 클릭</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">✏️</span>
+          <div>프로젝트 이름 입력: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">JepumScraper</code> (아무 이름 가능) → <strong>"만들기"</strong></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fdf4ff">⏳</span>
+          <div>프로젝트 생성 완료 알림 뜨면 해당 프로젝트로 전환</div>
+        </li>
+      </ul>
+      <div class="tip blue">
+        <span class="tip-icon">💡</span>
+        <p>실제 생성된 프로젝트 ID: <strong>bustling-tuner-495303-j1</strong><br>
+        프로젝트 이름과 ID는 다를 수 있습니다. ID는 자동 생성됩니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 2 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n2">2</div>
+      <div>
+        <div class="step-title">Google Drive API 사용 설정</div>
+        <div class="step-sub">API 라이브러리에서 Drive API 검색 후 활성화</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="130" viewBox="0 0 480 130" fill="none">
+          <!-- 사이드바 -->
+          <rect x="0" y="0" width="130" height="130" rx="0" fill="#1e293b"/>
+          <text x="14" y="20" font-size="9" fill="#94a3b8" font-family="sans-serif">API 및 서비스</text>
+          <rect x="10" y="26" width="110" height="22" rx="4" fill="#334155"/>
+          <text x="16" y="41" font-size="10" fill="white" font-family="sans-serif">📚 라이브러리</text>
+          <text x="16" y="64" font-size="10" fill="#94a3b8" font-family="sans-serif">🔑 사용자 인증 정보</text>
+          <text x="16" y="84" font-size="10" fill="#94a3b8" font-family="sans-serif">📋 OAuth 동의 화면</text>
+          <!-- 메인 영역 -->
+          <rect x="140" y="10" width="330" height="38" rx="6" fill="#f1f5f9"/>
+          <text x="154" y="22" font-size="9" fill="#94a3b8" font-family="sans-serif">검색</text>
+          <text x="154" y="36" font-size="11" fill="#1e293b" font-weight="bold" font-family="sans-serif">Google Drive API</text>
+          <!-- API 카드 -->
+          <rect x="140" y="58" width="148" height="62" rx="8" fill="white" stroke="#e2e8f0" stroke-width="1.5"/>
+          <!-- Drive 아이콘 미니 -->
+          <polygon points="190,70 210,70 220,86 210,102 190,102 180,86" fill="#FFBA00" opacity="0.3"/>
+          <text x="152" y="84" font-size="10" fill="#1e293b" font-weight="bold" font-family="sans-serif">Google Drive API</text>
+          <text x="152" y="98" font-size="9" fill="#6b7280" font-family="sans-serif">Google LLC</text>
+          <rect x="152" y="106" width="50" height="10" rx="3" fill="#4285F4"/>
+          <text x="162" y="114" font-size="7" fill="white" font-family="sans-serif">사용 설정</text>
+          <!-- 체크 표시 -->
+          <circle cx="420" cy="89" r="22" fill="#34A853"/>
+          <text x="410" y="95" font-size="22" fill="white">✓</text>
+        </svg>
+      </div>
+      <ul class="guide-list">
+        <li>
+          <span class="icon" style="background:#f0fdf4">🧭</span>
+          <div>왼쪽 메뉴 → <strong>"API 및 서비스"</strong> → <strong>"라이브러리"</strong></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#eff6ff">🔍</span>
+          <div>검색창에 <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">Google Drive API</code> 입력</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">☁️</span>
+          <div><strong>"Google Drive API"</strong> (Google LLC) 카드 클릭</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">✅</span>
+          <div>파란 <strong>"사용"</strong> 버튼 클릭 → 잠시 후 활성화 완료</div>
+        </li>
+      </ul>
+      <div class="tip green">
+        <span class="tip-icon">✅</span>
+        <p><strong>확인 방법:</strong> 페이지 상단에 "API가 사용 설정되었습니다" 또는 관리 버튼이 나타나면 성공입니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 3 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n3">3</div>
+      <div>
+        <div class="step-title">OAuth 동의 화면 설정</div>
+        <div class="step-sub">앱 정보 등록 — 외부(External) 유형으로 설정</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="130" viewBox="0 0 480 130" fill="none">
+          <!-- 폼 영역 -->
+          <rect x="10" y="8" width="460" height="114" rx="10" fill="white" stroke="#e2e8f0" stroke-width="1.5"/>
+          <text x="24" y="28" font-size="12" font-weight="bold" fill="#1e293b" font-family="sans-serif">OAuth 동의 화면 구성</text>
+          <!-- 라디오 버튼들 -->
+          <circle cx="28" cy="52" r="7" stroke="#4285F4" stroke-width="2" fill="white"/>
+          <circle cx="28" cy="52" r="3.5" fill="#4285F4"/>
+          <text x="40" y="56" font-size="11" fill="#1e293b" font-family="sans-serif">외부 (External) ← 선택</text>
+          <circle cx="28" cy="76" r="7" stroke="#d1d5db" stroke-width="2" fill="white"/>
+          <text x="40" y="80" font-size="11" fill="#9ca3af" font-family="sans-serif">내부 (Internal)</text>
+          <!-- 앱 이름 입력 -->
+          <text x="24" y="102" font-size="10" fill="#6b7280" font-family="sans-serif">앱 이름 *</text>
+          <rect x="100" y="90" width="150" height="20" rx="4" fill="#f8fafc" stroke="#d1d5db" stroke-width="1"/>
+          <text x="108" y="104" font-size="11" fill="#1e293b" font-family="sans-serif">JepumScraper</text>
+          <!-- 화살표 + 설명 -->
+          <rect x="310" y="40" width="148" height="80" rx="8" fill="#eff6ff" stroke="#c7d2fe" stroke-width="1.5"/>
+          <text x="320" y="58" font-size="10" fill="#4338ca" font-weight="bold" font-family="sans-serif">⚠️ 외부를 선택하면</text>
+          <text x="320" y="74" font-size="9.5" fill="#374151" font-family="sans-serif">테스트 모드로 배포 가능</text>
+          <text x="320" y="88" font-size="9.5" fill="#374151" font-family="sans-serif">테스트 사용자 100명 한도</text>
+          <text x="320" y="102" font-size="9.5" fill="#374151" font-family="sans-serif">✅ 개인 사용에 완벽</text>
+        </svg>
+      </div>
+      <ul class="guide-list">
+        <li>
+          <span class="icon" style="background:#eff6ff">🧭</span>
+          <div>왼쪽 메뉴 → <strong>"OAuth 동의 화면"</strong></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">📝</span>
+          <div>사용자 유형: <strong>"외부(External)"</strong> 선택 → <strong>"만들기"</strong></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">✏️</span>
+          <div>앱 이름: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">JepumScraper</code></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fdf4ff">📧</span>
+          <div>사용자 지원 이메일: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">hsong7266@gmail.com</code></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fff7ed">💾</span>
+          <div><strong>"저장 후 계속"</strong> 클릭 (스코프, 테스트 사용자 화면은 일단 저장)</div>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ════ STEP 4 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n4">4</div>
+      <div>
+        <div class="step-title">테스트 사용자 추가</div>
+        <div class="step-sub">액세스 차단 오류(403)를 피하기 위한 필수 단계</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="140" viewBox="0 0 480 140" fill="none">
+          <!-- 왼쪽: 오류 화면 -->
+          <rect x="5" y="5" width="210" height="130" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+          <circle cx="110" cy="40" r="16" fill="#EA4335"/>
+          <text x="103" y="46" font-size="18" fill="white" font-family="sans-serif">✕</text>
+          <text x="38" y="72" font-size="10" fill="#991b1b" font-weight="bold" font-family="sans-serif">액세스가 차단되었습니다</text>
+          <text x="18" y="88" font-size="8.5" fill="#b91c1c" font-family="sans-serif">JepumScraper은(는) Google</text>
+          <text x="18" y="100" font-size="8.5" fill="#b91c1c" font-family="sans-serif">인증 절차를 완료하지 않았음</text>
+          <text x="36" y="120" font-size="9" fill="#6b7280" font-family="sans-serif">Error 403: access_denied</text>
+
+          <!-- 화살표 -->
+          <text x="225" y="78" font-size="30" fill="#34A853">→</text>
+
+          <!-- 오른쪽: 해결 -->
+          <rect x="260" y="5" width="214" height="130" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+          <text x="275" y="28" font-size="10" fill="#166534" font-weight="bold" font-family="sans-serif">테스트 사용자 추가</text>
+          <rect x="275" y="36" width="186" height="24" rx="5" fill="white" stroke="#d1d5db" stroke-width="1"/>
+          <text x="283" y="52" font-size="10" fill="#374151" font-family="sans-serif">hsong7266@gmail.com</text>
+          <rect x="275" y="68" width="80" height="22" rx="5" fill="#34A853"/>
+          <text x="287" y="83" font-size="10" fill="white" font-family="sans-serif">+ 추가</text>
+          <circle cx="370" cy="108" r="18" fill="#34A853"/>
+          <text x="362" y="114" font-size="18" fill="white" font-family="sans-serif">✓</text>
+          <text x="395" y="112" font-size="10" fill="#166534" font-family="sans-serif">완료!</text>
+        </svg>
+      </div>
+      <div class="tip red">
+        <span class="tip-icon">🚨</span>
+        <p><strong>이 단계를 빠뜨리면 "액세스 차단됨 — Error 403: access_denied"가 발생합니다!</strong><br>
+        실제로 이 오류가 발생해서 이 단계가 추가되었습니다.</p>
+      </div>
+      <ul class="guide-list" style="margin-top:14px">
+        <li>
+          <span class="icon" style="background:#fef2f2">🧭</span>
+          <div>왼쪽 메뉴 → <strong>"OAuth 동의 화면"</strong> → 스크롤 내려 <strong>"테스트 사용자"</strong> 섹션</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#eff6ff">URL</span>
+          <div>또는 직접 접속: <span class="url-tag">console.cloud.google.com/auth/audience?project=bustling-tuner-495303-j1</span></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">➕</span>
+          <div><strong>"+ 사용자 추가"</strong> 클릭 → <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">hsong7266@gmail.com</code> 입력 → <strong>"저장"</strong></div>
+        </li>
+      </ul>
+      <div class="tip green" style="margin-top:14px">
+        <span class="tip-icon">✅</span>
+        <p>테스트 사용자로 추가된 계정은 앱 검수 없이 OAuth 로그인이 가능합니다. 개인 사용 시 이 상태로 영구 사용 가능합니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 5 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n5">5</div>
+      <div>
+        <div class="step-title">OAuth 클라이언트 ID 생성</div>
+        <div class="step-sub">데스크톱 앱 타입으로 생성 — credentials.json 발급</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="130" viewBox="0 0 480 130" fill="none">
+          <!-- 단계별 흐름 -->
+          <rect x="10" y="45" width="100" height="40" rx="8" fill="#eff6ff" stroke="#c7d2fe" stroke-width="1.5"/>
+          <text x="28" y="62" font-size="9.5" fill="#4338ca" font-family="sans-serif">사용자 인증 정보</text>
+          <text x="24" y="76" font-size="9.5" fill="#4338ca" font-family="sans-serif">→ 인증정보 만들기</text>
+          <text x="118" y="68" font-size="20" fill="#94a3b8">→</text>
+          <rect x="132" y="45" width="100" height="40" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+          <text x="145" y="63" font-size="9.5" fill="#166534" font-family="sans-serif">OAuth 클라이언트</text>
+          <text x="155" y="77" font-size="9.5" fill="#166534" font-family="sans-serif">ID 선택</text>
+          <text x="240" y="68" font-size="20" fill="#94a3b8">→</text>
+          <rect x="256" y="45" width="100" height="40" rx="8" fill="#fefce8" stroke="#fde68a" stroke-width="1.5"/>
+          <text x="268" y="63" font-size="9.5" fill="#92400e" font-family="sans-serif">유형: 데스크톱</text>
+          <text x="276" y="77" font-size="9.5" fill="#92400e" font-family="sans-serif">앱 선택</text>
+          <text x="364" y="68" font-size="20" fill="#94a3b8">→</text>
+          <rect x="384" y="45" width="88" height="40" rx="8" fill="#fdf4ff" stroke="#e9d5ff" stroke-width="1.5"/>
+          <text x="400" y="59" font-size="9" fill="#6b21a8" font-family="sans-serif">📄 JSON</text>
+          <text x="392" y="73" font-size="9" fill="#6b21a8" font-family="sans-serif">다운로드!</text>
+          <!-- 파일 아이콘 -->
+          <text x="392" y="86" font-size="8" fill="#9ca3af" font-family="sans-serif">credentials.json</text>
+        </svg>
+      </div>
+      <ul class="guide-list">
+        <li>
+          <span class="icon" style="background:#eff6ff">🧭</span>
+          <div>왼쪽 메뉴 → <strong>"사용자 인증 정보"</strong> → <strong>"+ 사용자 인증 정보 만들기"</strong></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">🔑</span>
+          <div><strong>"OAuth 클라이언트 ID"</strong> 선택</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">🖥️</span>
+          <div>애플리케이션 유형: <strong>"데스크톱 앱"</strong> 선택 (중요!)</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fdf4ff">✏️</span>
+          <div>이름: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">JepumScraper</code> 입력 → <strong>"만들기"</strong></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fff7ed">⬇️</span>
+          <div>생성 완료 팝업에서 <strong>"JSON 다운로드"</strong> 클릭</div>
+        </li>
+      </ul>
+      <div class="tip orange">
+        <span class="tip-icon">⚠️</span>
+        <p><strong>"웹 애플리케이션"이 아닌 "데스크톱 앱"을 선택해야 합니다.</strong><br>
+        웹 앱 타입은 redirect_uri 불일치 오류가 발생합니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 6 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n6">6</div>
+      <div>
+        <div class="step-title">credentials.json 파일 배치</div>
+        <div class="step-sub">다운받은 파일을 JepumScraper 루트에 복사</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="120" viewBox="0 0 480 120" fill="none">
+          <!-- 다운로드 폴더 -->
+          <rect x="10" y="20" width="140" height="80" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+          <text x="22" y="38" font-size="10" fill="#6b7280" font-family="sans-serif">📁 다운로드</text>
+          <rect x="20" y="46" width="120" height="44" rx="5" fill="white" stroke="#c7d2fe" stroke-width="1.5"/>
+          <text x="30" y="65" font-size="20">📄</text>
+          <text x="58" y="62" font-size="9.5" fill="#4338ca" font-family="monospace">client_secret_</text>
+          <text x="58" y="74" font-size="9.5" fill="#4338ca" font-family="monospace">809495...json</text>
+
+          <!-- 화살표 복사 -->
+          <text x="165" y="65" font-size="13" fill="#6b7280" font-family="sans-serif">이름 변경 후 복사</text>
+          <text x="210" y="85" font-size="20" fill="#4285F4">↓</text>
+
+          <!-- JepumScraper 폴더 -->
+          <rect x="290" y="10" width="180" height="100" rx="8" fill="#eff6ff" stroke="#c7d2fe" stroke-width="1.5"/>
+          <text x="304" y="28" font-size="10" fill="#4338ca" font-family="sans-serif">📁 C:\JepumScraper\</text>
+          <rect x="300" y="36" width="160" height="28" rx="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
+          <text x="312" y="47" font-size="20">📄</text>
+          <text x="338" y="48" font-size="11" fill="#1d4ed8" font-weight="bold" font-family="monospace">credentials.json</text>
+          <text x="338" y="60" font-size="8.5" fill="#6b7280" font-family="sans-serif">← 여기에!</text>
+          <text x="300" y="80" font-size="9" fill="#6b7280" font-family="sans-serif">main.py, config.py ...</text>
+          <text x="300" y="94" font-size="9" fill="#6b7280" font-family="sans-serif">setup_gdrive.py ...</text>
+        </svg>
+      </div>
+
+      <div class="folder-tree">
+        <span class="dir">C:\JepumScraper\</span><br>
+        &nbsp;&nbsp;├── <span class="file">credentials.json</span> &nbsp;<span class="cmt">← ★ 여기에 복사 (이름 반드시 이렇게)</span><br>
+        &nbsp;&nbsp;├── main.py<br>
+        &nbsp;&nbsp;├── setup_gdrive.py<br>
+        &nbsp;&nbsp;├── config.py<br>
+        &nbsp;&nbsp;└── <span class="dir">data/</span><br>
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="file">gdrive_token.json</span> &nbsp;<span class="cmt">← 인증 후 자동 생성됨</span>
+      </div>
+
+      <div class="code-block" style="margin-top:14px">
+<span class="cmt"># credentials.json 내부 구조 (실제 값)</span>
+{
+  <span class="key">"installed"</span>: {
+    <span class="key">"client_id"</span>: <span class="str">"809495759728-5ld78d76fl3...apps.googleusercontent.com"</span>,
+    <span class="key">"project_id"</span>: <span class="str">"bustling-tuner-495303-j1"</span>,
+    <span class="key">"auth_uri"</span>: <span class="str">"https://accounts.google.com/o/oauth2/auth"</span>,
+    <span class="key">"token_uri"</span>: <span class="str">"https://oauth2.googleapis.com/token"</span>,
+    <span class="key">"client_secret"</span>: <span class="str">"GOCSPX-XiHp6g4Gmc..."</span>,
+    <span class="key">"redirect_uris"</span>: [<span class="str">"http://localhost"</span>]
+  }
+}
+      </div>
+      <div class="tip orange">
+        <span class="tip-icon">⚠️</span>
+        <p><strong>파일명을 반드시 <code>credentials.json</code>으로 변경</strong>해서 저장하세요.<br>
+        Google이 다운로드해주는 원본 파일명은 길게 되어 있습니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 7 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n7">7</div>
+      <div>
+        <div class="step-title">setup_gdrive.py 실행 — 최초 인증</div>
+        <div class="step-sub">브라우저에서 Google 로그인 → 토큰 자동 저장</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="140" viewBox="0 0 480 140" fill="none">
+          <!-- 터미널 -->
+          <rect x="5" y="5" width="220" height="130" rx="10" fill="#1e1e2e"/>
+          <rect x="5" y="5" width="220" height="22" rx="10" fill="#313244"/>
+          <rect x="5" y="16" width="220" height="11" fill="#313244"/>
+          <circle cx="20" cy="16" r="4" fill="#f38ba8"/>
+          <circle cx="33" cy="16" r="4" fill="#f9e2af"/>
+          <circle cx="46" cy="16" r="4" fill="#a6e3a1"/>
+          <text x="15" y="44" font-size="9" fill="#89b4fa" font-family="monospace">python setup_gdrive.py</text>
+          <text x="15" y="60" font-size="8.5" fill="#a6e3a1" font-family="monospace">✅ google 패키지 설치됨</text>
+          <text x="15" y="74" font-size="8.5" fill="#a6e3a1" font-family="monospace">✅ credentials.json 확인됨</text>
+          <text x="15" y="88" font-size="8.5" fill="#f9e2af" font-family="monospace">브라우저가 열립니다...</text>
+          <text x="15" y="102" font-size="8.5" fill="#a6e3a1" font-family="monospace">✅ 인증 성공! 토큰 저장 완료</text>
+          <text x="15" y="116" font-size="8.5" fill="#a6e3a1" font-family="monospace">연결된 계정: hsong7266@gmail.com</text>
+          <text x="15" y="130" font-size="8.5" fill="#a6e3a1" font-family="monospace">🎉 설정 완료!</text>
+
+          <!-- 브라우저 Google 로그인 -->
+          <rect x="240" y="5" width="234" height="130" rx="10" fill="white" stroke="#e2e8f0" stroke-width="1.5"/>
+          <rect x="240" y="5" width="234" height="20" rx="10" fill="#f1f5f9"/>
+          <rect x="240" y="15" width="234" height="10" fill="#f1f5f9"/>
+          <!-- Google 로고 영역 -->
+          <text x="290" y="40" font-size="18" font-weight="bold" fill="#4285F4" font-family="sans-serif">G</text>
+          <text x="305" y="40" font-size="18" font-weight="bold" fill="#EA4335" font-family="sans-serif">o</text>
+          <text x="318" y="40" font-size="18" font-weight="bold" fill="#FBBC05" font-family="sans-serif">o</text>
+          <text x="331" y="40" font-size="18" font-weight="bold" fill="#4285F4" font-family="sans-serif">g</text>
+          <text x="344" y="40" font-size="18" font-weight="bold" fill="#34A853" font-family="sans-serif">l</text>
+          <text x="353" y="40" font-size="18" font-weight="bold" fill="#EA4335" font-family="sans-serif">e</text>
+          <text x="260" y="58" font-size="9.5" fill="#374151" font-family="sans-serif">계정 선택</text>
+          <!-- 계정 버튼 -->
+          <rect x="252" y="66" width="208" height="32" rx="6" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1"/>
+          <circle cx="270" cy="82" r="10" fill="#34A853"/>
+          <text x="265" y="87" font-size="11" fill="white">H</text>
+          <text x="285" y="80" font-size="9" fill="#1e293b" font-family="sans-serif">hsong7266@gmail.com</text>
+          <text x="285" y="92" font-size="8" fill="#6b7280" font-family="sans-serif">이 계정으로 계속</text>
+          <!-- 허용 버튼 -->
+          <rect x="320" y="108" width="128" height="22" rx="5" fill="#4285F4"/>
+          <text x="342" y="122" font-size="9.5" fill="white" font-family="sans-serif">허용 (Allow)</text>
+        </svg>
+      </div>
+      <ul class="guide-list">
+        <li>
+          <span class="icon" style="background:#1e1e2e;color:white;font-size:10px">CMD</span>
+          <div>명령 프롬프트 열기 → <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">cd C:\JepumScraper</code></div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">▶️</span>
+          <div><code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">python setup_gdrive.py</code> 실행</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#eff6ff">🌐</span>
+          <div>브라우저가 자동으로 열리면 <strong>hsong7266@gmail.com</strong> 계정 선택</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">🛡️</span>
+          <div>"JepumScraper이(가) Google 드라이브에 액세스하도록 허용" → <strong>"허용"</strong> 클릭</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">💾</span>
+          <div>성공 시 <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">data/gdrive_token.json</code> 자동 저장됨</div>
+        </li>
+      </ul>
+      <div class="code-block">
+<span class="cmt"># 터미널 실행 명령</span>
+<span class="kw">cd</span> C:\JepumScraper
+<span class="kw">python</span> setup_gdrive.py
+
+<span class="cmt"># 성공 시 출력 예시:</span>
+✅ google 패키지 설치됨
+✅ credentials.json 확인됨
+✅ 인증 성공! 토큰 저장 완료
+   C:\JepumScraper\data\gdrive_token.json
+   연결된 계정: hsong7266@gmail.com
+🎉 설정 완료!
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 8 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n8">8</div>
+      <div>
+        <div class="step-title">JepumScraper 설정에서 Drive 업로드 ON</div>
+        <div class="step-sub">설정 화면에서 Google Drive 자동 업로드 활성화</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="120" viewBox="0 0 480 120" fill="none">
+          <!-- 설정 화면 mock -->
+          <rect x="10" y="10" width="460" height="100" rx="10" fill="white" stroke="#e2e8f0" stroke-width="1.5"/>
+          <text x="24" y="32" font-size="12" font-weight="bold" fill="#1e293b" font-family="sans-serif">⚙️ JepumScraper 설정</text>
+
+          <!-- Drive 설정 행 -->
+          <text x="24" y="56" font-size="11" fill="#374151" font-family="sans-serif">Google Drive 자동 업로드</text>
+          <!-- 토글 ON -->
+          <rect x="300" y="44" width="46" height="24" rx="12" fill="#34A853"/>
+          <circle cx="334" cy="56" r="9" fill="white" style="filter:drop-shadow(0 1px 3px rgba(0,0,0,.2))"/>
+          <text x="352" y="60" font-size="11" fill="#34A853" font-weight="bold" font-family="sans-serif">ON</text>
+
+          <!-- 폴더명 행 -->
+          <text x="24" y="82" font-size="11" fill="#374151" font-family="sans-serif">Drive 폴더명</text>
+          <rect x="180" y="70" width="200" height="22" rx="5" fill="#f8fafc" stroke="#d1d5db" stroke-width="1"/>
+          <text x="190" y="85" font-size="10" fill="#1e293b" font-family="sans-serif">JepumScraper 상세이미지</text>
+        </svg>
+      </div>
+      <ul class="guide-list">
+        <li>
+          <span class="icon" style="background:#eff6ff">🌐</span>
+          <div>브라우저에서 <span class="url-tag">http://localhost:5000</span> 접속 → 우측 상단 ⚙️ 설정</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">🔄</span>
+          <div><strong>"Google Drive 자동 업로드"</strong> 토글 → <strong>ON</strong> 으로 변경</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">📁</span>
+          <div>Drive 폴더명: <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">JepumScraper 상세이미지</code> (기본값 그대로 OK)</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fdf4ff">💾</span>
+          <div><strong>"저장"</strong> 클릭 → <code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">user_settings.json</code>에 자동 저장됨</div>
+        </li>
+      </ul>
+      <div class="code-block">
+<span class="cmt"># user_settings.json에 저장되는 값</span>
+{
+  <span class="key">"gdrive_enabled"</span>: <span class="val">true</span>,   <span class="cmt">← ON 상태</span>
+  <span class="key">"gdrive_folder"</span>: <span class="str">"JepumScraper 상세이미지"</span>
+}
+      </div>
+      <div class="tip blue">
+        <span class="tip-icon">💡</span>
+        <p>설정 파일은 <code>C:\JepumScraper\user_settings.json</code>에 저장됩니다.<br>
+        앱을 재시작해도 설정이 유지됩니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ STEP 9 ════ -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num n9">9</div>
+      <div>
+        <div class="step-title">자동 업로드 확인</div>
+        <div class="step-sub">캡처 실행 후 Google Drive에서 폴더 확인</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div class="illust">
+        <svg width="480" height="140" viewBox="0 0 480 140" fill="none">
+          <!-- 캡처 버튼 -->
+          <rect x="10" y="50" width="120" height="40" rx="8" fill="#4285F4"/>
+          <text x="28" y="75" font-size="12" fill="white" font-weight="bold" font-family="sans-serif">📸 상세 캡처</text>
+          <!-- 화살표 -->
+          <text x="140" y="75" font-size="20" fill="#94a3b8">→</text>
+          <!-- 업로드 아이콘 -->
+          <rect x="168" y="48" width="96" height="44" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+          <text x="188" y="72" font-size="20">☁️</text>
+          <text x="195" y="84" font-size="8.5" fill="#166534" font-family="sans-serif">업로드 중</text>
+          <!-- 화살표 -->
+          <text x="274" y="75" font-size="20" fill="#94a3b8">→</text>
+          <!-- Drive 폴더 구조 -->
+          <rect x="300" y="10" width="172" height="120" rx="10" fill="#fefce8" stroke="#fde68a" stroke-width="1.5"/>
+          <text x="314" y="28" font-size="10" fill="#92400e" font-weight="bold" font-family="sans-serif">📁 내 드라이브</text>
+          <text x="322" y="46" font-size="9.5" fill="#78350f" font-family="sans-serif">└📁 JepumScraper 상세이미지</text>
+          <text x="334" y="62" font-size="9.5" fill="#78350f" font-family="sans-serif">└📁 주머니</text>
+          <text x="346" y="76" font-size="8.5" fill="#a16207" font-family="monospace">└📄 auction_B249...</text>
+          <text x="362" y="88" font-size="7.5" fill="#a16207" font-family="monospace">_fullpage.jpg</text>
+          <text x="346" y="102" font-size="8.5" fill="#a16207" font-family="monospace">└📄 auction_B477...</text>
+          <text x="362" y="114" font-size="7.5" fill="#a16207" font-family="monospace">_fullpage.jpg</text>
+        </svg>
+      </div>
+
+      <div class="flow">
+        <div class="flow-item">📸 상세 캡처 실행</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-item">캡처 성공 확인</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-item">GDrive 업로드</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-item">Drive 폴더 생성</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-item">✅ 파일 저장</div>
+      </div>
+
+      <ul class="guide-list" style="margin-top:12px">
+        <li>
+          <span class="icon" style="background:#eff6ff">🌐</span>
+          <div>JepumScraper에서 검색 → 결과에서 상품 선택 → <strong>"상세 캡처"</strong> 버튼 클릭</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#f0fdf4">📋</span>
+          <div>서버 로그(<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px">logs/server.log</code>)에서 <code>[GDrive] 업로드 완료</code> 메시지 확인</div>
+        </li>
+        <li>
+          <span class="icon" style="background:#fefce8">☁️</span>
+          <div><span class="url-tag">drive.google.com</span> → <strong>내 드라이브</strong> → <strong>JepumScraper 상세이미지</strong> 폴더 확인</div>
+        </li>
+      </ul>
+
+      <div class="folder-tree">
+<span class="dir">내 드라이브/</span>
+└── <span class="dir">JepumScraper 상세이미지/</span> &nbsp;<span class="cmt">← 자동 생성</span>
+&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">{검색 키워드}/</span> &nbsp;<span class="cmt">← 검색어별 폴더</span>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">auction_B249486936_fullpage.jpg</span>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">auction_B477730535_fullpage.jpg</span>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="file">naver_12345678_fullpage.jpg</span>
+      </div>
+
+      <div class="code-block" style="margin-top:14px">
+<span class="cmt"># 성공 시 logs/server.log 출력 예시</span>
+[GDrive] Drive API 연결 성공
+[GDrive] 업로드 완료: auction_B249486936_fullpage.jpg
+         → JepumScraper 상세이미지/주머니/ (https://drive.google.com/...)
+[GDrive] 업로드 완료: auction_B249486936 (1개)
+      </div>
+
+      <div class="tip green" style="margin-top:14px">
+        <span class="tip-icon">🎉</span>
+        <p><strong>토큰 자동 갱신:</strong> gdrive_token.json의 토큰이 만료되어도 refresh_token으로 자동 갱신됩니다. setup_gdrive.py를 다시 실행할 필요 없습니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 완료 배너 -->
+  <div class="done-banner">
+    <div style="font-size:48px;margin-bottom:12px">🎉</div>
+    <h2>연동 완료!</h2>
+    <p>이제 JepumScraper에서 상세 캡처를 할 때마다<br>
+    Google Drive <strong>hsong7266@gmail.com</strong> 계정에 자동으로 저장됩니다.</p>
+    <div style="margin-top:20px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+      <span style="background:rgba(255,255,255,.2);border-radius:20px;padding:6px 16px;font-size:13px">📁 내 드라이브 → JepumScraper 상세이미지</span>
+      <span style="background:rgba(255,255,255,.2);border-radius:20px;padding:6px 16px;font-size:13px">🔄 토큰 자동 갱신</span>
+      <span style="background:rgba(255,255,255,.2);border-radius:20px;padding:6px 16px;font-size:13px">🚀 재설정 불필요</span>
+    </div>
+  </div>
+
+  <!-- 트러블슈팅 -->
+  <div class="step" style="margin-top:40px">
+    <div class="step-header">
+      <div class="step-num" style="background:linear-gradient(135deg,#374151,#1f2937)">🔧</div>
+      <div>
+        <div class="step-title">트러블슈팅 — 자주 발생한 오류</div>
+        <div class="step-sub">이 프로젝트에서 실제로 겪었던 오류와 해결책</div>
+      </div>
+    </div>
+    <div class="step-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="tip red">
+          <span class="tip-icon">❌</span>
+          <div>
+            <p><strong>Error 403: access_denied — "액세스가 차단되었습니다"</strong><br>
+            원인: 계정이 테스트 사용자 목록에 없음<br>
+            해결: GCP Console → OAuth 동의 화면 → 테스트 사용자 → <code>hsong7266@gmail.com</code> 추가</p>
+          </div>
+        </div>
+        <div class="tip orange">
+          <span class="tip-icon">⚠️</span>
+          <div>
+            <p><strong>[Settings] load failed: Unexpected UTF-8 BOM</strong><br>
+            원인: user_settings.json이 BOM 포함된 UTF-8로 저장됨<br>
+            해결: load_settings()에서 utf-8-sig 인코딩으로 재시도하도록 수정됨 (자동 해결)</p>
+          </div>
+        </div>
+        <div class="tip blue">
+          <span class="tip-icon">ℹ️</span>
+          <div>
+            <p><strong>GDrive 업로드 안 됨 — 리뷰 화면에서 직접 캡처 시</strong><br>
+            원인: /api/scrape_details 라우트에 GDrive 업로드 코드 없었음<br>
+            해결: job_queue.py와 동일하게 scrape_details 라우트에도 업로드 코드 추가됨</p>
+          </div>
+        </div>
+        <div class="tip green">
+          <span class="tip-icon">💡</span>
+          <div>
+            <p><strong>토큰 만료 (expiry 지났을 때)</strong><br>
+            자동 처리됨 — refresh_token으로 자동 갱신됩니다. 별도 조치 불필요.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 다운로드 버튼 -->
+  <div class="dl-wrap">
+    <button class="dl-btn" onclick="downloadHTML()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M12 3v13M5 15l7 7 7-7"/><path d="M3 21h18"/>
+      </svg>
+      이 가이드 HTML 파일로 다운로드
+    </button>
+  </div>
+
+</div>
+
+<script>
+function downloadHTML() {
+  const html = document.documentElement.outerHTML;
+  const blob = new Blob([html], {type: 'text/html;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'JepumScraper_GoogleDrive_연동가이드.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

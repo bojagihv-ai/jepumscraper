@@ -120,6 +120,22 @@
             color: var(--text-muted);
         }
 
+        .card-seller {
+            font-size: 0.78rem;
+            color: #cbd5e1;
+            margin: -0.25rem 0 0.5rem 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .card-meta-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
         .tier-badge {
             position: absolute;
             top: 10px;
@@ -257,6 +273,286 @@
             align-items: center;
             flex-direction: column;
         }
+        /* 플랫폼 필터 탭 */
+        .platform-tabs {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin: 0.5rem 0 1rem 0;
+        }
+        .platform-tab {
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1.5px solid var(--border-color);
+            background: var(--surface-color);
+            color: var(--text-muted);
+            transition: all 0.15s;
+            user-select: none;
+        }
+        .platform-tab:hover {
+            border-color: #60a5fa;
+            color: #60a5fa;
+        }
+        .platform-tab.active {
+            background: #1d4ed8;
+            border-color: #3b82f6;
+            color: #fff;
+        }
+        .platform-tab .tab-count {
+            display: inline-block;
+            margin-left: 4px;
+            font-size: 0.75rem;
+            opacity: 0.75;
+        }
+        /* 정렬/그룹 툴바 */
+        .sort-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            flex-wrap: wrap;
+            margin: 0 0 1rem 0;
+            padding: 8px 14px;
+            background: rgba(255,255,255,0.02);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+        .toolbar-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .toolbar-divider {
+            width: 1px;
+            height: 20px;
+            background: var(--border-color);
+        }
+        .toolbar-label {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .sort-btn {
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1.5px solid var(--border-color);
+            background: var(--surface-color);
+            color: var(--text-muted);
+            transition: all 0.15s;
+        }
+        .sort-btn:hover { border-color: #60a5fa; color: #60a5fa; }
+        .sort-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+        /* 업체 그룹 */
+        .seller-group { margin-bottom: 2rem; }
+        .seller-group-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 16px;
+            margin-bottom: 12px;
+            background: rgba(59,130,246,0.07);
+            border-left: 3px solid #3b82f6;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .seller-group-header:hover { background: rgba(59,130,246,0.14); }
+        .seller-group-header .seller-name { font-weight: 700; font-size: 0.95rem; color: #93c5fd; }
+        .seller-group-header .seller-count {
+            font-size: 0.78rem; color: var(--text-muted);
+            background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 10px;
+        }
+        .seller-group-header .seller-plats { font-size: 0.75rem; color: var(--text-muted); margin-left: auto; }
+        .seller-group-header .seller-arrow { font-size: 0.8rem; color: var(--text-muted); }
+        .seller-group-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+        /* ── 검색 패널 ── */
+        .search-panel {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 0 0 10px 0;
+            padding: 10px 14px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+        }
+        .search-field {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .search-input-wrap {
+            position: relative;
+            flex: 1;
+            min-width: 180px;
+        }
+        .search-icon-pos {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            pointer-events: none;
+        }
+        .search-text-input {
+            width: 100%;
+            padding: 6px 30px 6px 30px;
+            border-radius: 8px;
+            border: 1.5px solid var(--border-color);
+            background: var(--surface-color);
+            color: var(--text-main);
+            font-size: 0.85rem;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .search-text-input:focus { border-color: var(--primary-color); }
+        .search-clear-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: none;
+            padding: 0;
+            line-height: 1;
+        }
+        .search-num-input {
+            width: 80px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            border: 1.5px solid var(--border-color);
+            background: var(--surface-color);
+            color: var(--text-main);
+            font-size: 0.82rem;
+            outline: none;
+            text-align: center;
+        }
+        .search-num-input:focus { border-color: var(--primary-color); }
+        .search-label { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; }
+        .search-sep { color: var(--border-color); }
+        .search-divider { width: 1px; height: 20px; background: var(--border-color); flex-shrink: 0; }
+        .search-result-badge {
+            margin-left: auto;
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        .search-result-badge b { color: var(--primary-color); }
+
+        /* ── 뷰 토글 버튼 ── */
+        .view-toggle-btn {
+            padding: 5px 10px;
+            border-radius: 8px;
+            border: 1.5px solid var(--border-color);
+            background: var(--surface-color);
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            transition: all 0.15s;
+        }
+        .view-toggle-btn:hover { border-color: #60a5fa; color: #60a5fa; }
+        .view-toggle-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+
+        /* ── 리스트 뷰 ── */
+        #listViewContainer { display: none; flex-direction: column; gap: 3px; }
+        .list-header {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            padding: 5px 10px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 4px;
+            user-select: none;
+        }
+        .list-row {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            padding: 5px 10px;
+            background: var(--surface-color);
+            border-radius: 8px;
+            border: 1.5px solid transparent;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s;
+        }
+        .list-row:hover { background: rgba(255,255,255,0.04); }
+        .list-row.selected { border-color: var(--primary-color); background: rgba(59,130,246,0.08); }
+
+        .lc-chk  { width: 26px;  flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+        .list-checkbox-sq {
+            width: 18px; height: 18px; border-radius: 4px;
+            border: 2px solid var(--border-color);
+            display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: bold;
+        }
+        .list-row.selected .list-checkbox-sq { background: var(--primary-color); border-color: var(--primary-color); color: #fff; }
+        .lc-thumb { width: 52px; flex-shrink: 0; margin-right: 10px; }
+        .list-thumb-img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; background: #222; display: block; }
+        .lc-rank  { width: 36px;  flex-shrink: 0; font-size: 0.72rem; color: var(--text-muted); text-align: center; font-weight: 600; }
+        .lc-score { width: 48px;  flex-shrink: 0; text-align: center; }
+        .lc-title { flex: 1; min-width: 0; font-size: 0.87rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 10px; }
+        .lc-tier  { width: 24px;  flex-shrink: 0; text-align: center; font-size: 0.78rem; }
+        .lc-price { width: 95px;  flex-shrink: 0; text-align: right; font-size: 0.85rem; font-weight: 700; color: var(--success-color); padding-right: 8px; }
+        .lc-seller { width: 96px; flex-shrink: 0; text-align: left; font-size: 0.74rem; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; }
+        .lc-plat  { width: 60px;  flex-shrink: 0; text-align: center; font-size: 0.75rem; color: var(--text-muted); }
+        .lc-link  { width: 42px;  flex-shrink: 0; text-align: center; }
+        .list-ext-link { font-size: 0.75rem; color: var(--primary-color); text-decoration: none; }
+        .list-ext-link:hover { text-decoration: underline; }
+        .list-score-sm { font-size: 0.72rem; font-weight: 700; padding: 2px 6px; border-radius: 8px; }
+
+        /* 업체별 2차 탭 바 */
+        .seller-tabs-bar {
+            display: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: -4px 0 10px 0;
+            padding: 10px 14px;
+            background: rgba(99,102,241,0.06);
+            border: 1px solid rgba(99,102,241,0.2);
+            border-radius: 10px;
+            align-items: center;
+        }
+        .seller-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1.5px solid rgba(99,102,241,0.25);
+            background: rgba(99,102,241,0.05);
+            color: #94a3b8;
+            transition: all 0.15s;
+            white-space: nowrap;
+            user-select: none;
+        }
+        .seller-tab:hover { border-color: #818cf8; color: #c7d2fe; background: rgba(99,102,241,0.12); }
+        .seller-tab.active { background: #312e81; border-color: #6366f1; color: #e0e7ff; font-weight: 700; }
+        .seller-tab b { font-weight: 700; }
+        .seller-tab small { font-size: 0.7rem; opacity: 0.65; margin-left: 2px; }
     </style>
 </head>
 
@@ -279,6 +575,76 @@
             </div>
         </div>
     </div>
+
+    <!-- ── AI 작업 보고서 ── -->
+    {% if search_report and search_report.ai_report and search_report.ai_report.enabled %}
+    {% set air = search_report.ai_report %}
+    <div id="aiReportCard"
+        style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(99,102,241,0.10), rgba(139,92,246,0.06)); border: 1px solid rgba(99,102,241,0.3); border-radius: 12px; padding: 1rem 1.25rem; animation: fadeInDown 0.4s ease;">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="font-size:1.3rem;">🤖</span>
+                <strong style="font-size:1rem; color:#a5b4fc;">AI 작업 보고서</strong>
+                <span style="font-size:0.78rem; color:#6b7280; background:rgba(255,255,255,0.05); padding:2px 10px; border-radius:10px;">
+                    {{ air.engine_type | upper }} · {{ air.model }}
+                </span>
+            </div>
+            <button onclick="document.getElementById('aiReportCard').style.display='none'"
+                style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:1.1rem;" title="닫기">✕</button>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px;">
+            <!-- 검색어 최적화 -->
+            <div style="background:rgba(99,102,241,0.08); border-radius:8px; padding:10px 14px;">
+                <div style="font-size:0.75rem; color:#818cf8; font-weight:600; margin-bottom:6px;">🔍 검색어 최적화</div>
+                {% if air.keyword_opt.success %}
+                <div style="font-size:0.82rem; color:#94a3b8; margin-bottom:4px;">원본: <span style="color:#e2e8f0;">{{ air.keyword_opt.original }}</span></div>
+                {% if air.keyword_opt.changed %}
+                <div style="font-size:0.82rem; color:#94a3b8; margin-bottom:4px;">→ 사용: <span style="color:#a5b4fc; font-weight:700;">{{ air.keyword_opt.result }}</span></div>
+                {% else %}
+                <div style="font-size:0.8rem; color:#94a3b8;">변경 없음 (원본 키워드 사용)</div>
+                {% endif %}
+                {% if air.keyword_opt.keywords and air.keyword_opt.keywords|length > 1 %}
+                <div style="margin-top:5px; display:flex; flex-wrap:wrap; gap:4px;">
+                    {% for kw in air.keyword_opt.keywords %}
+                    <span style="font-size:0.72rem; padding:2px 8px; border-radius:10px; background:rgba(99,102,241,0.15); color:#a5b4fc;">{{ kw }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% elif air.keyword_opt.error is defined %}
+                <div style="font-size:0.8rem; color:#f87171;">⚠ 실패: 원본 키워드 사용</div>
+                {% else %}
+                <div style="font-size:0.8rem; color:#6b7280;">비활성화됨</div>
+                {% endif %}
+            </div>
+
+            <!-- 후보 재랭킹 -->
+            <div style="background:rgba(139,92,246,0.08); border-radius:8px; padding:10px 14px;">
+                <div style="font-size:0.75rem; color:#a78bfa; font-weight:600; margin-bottom:6px;">🎯 후보 재랭킹</div>
+                {% if air.reranking.enabled %}
+                    {% if air.reranking.success %}
+                    <div style="font-size:0.88rem; color:#86efac; font-weight:700;">✅ 완료</div>
+                    <div style="font-size:0.8rem; color:#94a3b8; margin-top:3px;">상위 {{ air.reranking.count }}개 후보를 AI 비전으로 재평가</div>
+                    <div style="font-size:0.76rem; color:#6b7280; margin-top:3px;">AI 점수 40% + 기존 점수 60% 혼합</div>
+                    {% elif air.reranking.error is defined %}
+                    <div style="font-size:0.8rem; color:#f87171;">⚠ 실패: 기존 순서 유지</div>
+                    <div style="font-size:0.72rem; color:#6b7280; margin-top:2px; word-break:break-all;">{{ air.reranking.error[:80] }}</div>
+                    {% else %}
+                    <div style="font-size:0.8rem; color:#6b7280;">대기 중...</div>
+                    {% endif %}
+                {% else %}
+                <div style="font-size:0.8rem; color:#6b7280;">비활성화됨</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <style>
+        @keyframes fadeInDown {
+            from { opacity:0; transform:translateY(-10px); }
+            to   { opacity:1; transform:translateY(0); }
+        }
+    </style>
+    {% endif %}
 
     <!-- 검색 보고서 패널 -->
     <div id="coupangManualPanel"
@@ -437,13 +803,80 @@
     {% if all_candidates %}
     <div id="productContainer">
         <div class="section-title" style="color: #60a5fa;">
-            🏆 전체 검색 결과 {{ all_candidates|length }}개
-            <span style="font-size:0.8rem; color: var(--text-muted); margin-left:8px;">상위 10개는 순위 배지 표시 · 최대 5개 선택 가능</span>
+            🏆 전체 검색 결과 <span id="tabResultCount">{{ all_candidates|length }}</span>개
+            <span style="font-size:0.8rem; color: var(--text-muted); margin-left:8px;">상위 10개는 순위 배지 표시 · 원하는 만큼 선택 가능</span>
         </div>
-        <div class="candidates-grid">
+        <!-- 플랫폼 필터 탭 -->
+        <div class="platform-tabs" id="platformTabs">
+            <span class="platform-tab active" onclick="filterPlatform('all', this)">전체 <span class="tab-count" id="tab-count-all">{{ all_candidates|length }}</span></span>
+            <span class="platform-tab" onclick="filterPlatform('coupang', this)" id="tab-coupang" style="display:none">쿠팡 <span class="tab-count" id="tab-count-coupang">0</span></span>
+            <span class="platform-tab" onclick="filterPlatform('naver', this)" id="tab-naver" style="display:none">네이버 <span class="tab-count" id="tab-count-naver">0</span></span>
+            <span class="platform-tab" onclick="filterPlatform('gmarket', this)" id="tab-gmarket" style="display:none">G마켓 <span class="tab-count" id="tab-count-gmarket">0</span></span>
+            <span class="platform-tab" onclick="filterPlatform('auction', this)" id="tab-auction" style="display:none">옥션 <span class="tab-count" id="tab-count-auction">0</span></span>
+            <span class="platform-tab" onclick="filterPlatform('elevenst', this)" id="tab-elevenst" style="display:none">11번가 <span class="tab-count" id="tab-count-elevenst">0</span></span>
+        </div>
+        <!-- 정렬 / 그룹 툴바 -->
+        <div class="sort-toolbar" id="sortToolbar">
+            <div class="toolbar-group">
+                <span class="toolbar-label">정렬</span>
+                <button class="sort-btn active" id="sortRankBtn" onclick="setSortMode('rank', this)">🏆 관련도순</button>
+                <button class="sort-btn" id="sortPriceAscBtn" onclick="setSortMode('price-asc', this)">💰 가격낮은순</button>
+                <button class="sort-btn" id="sortPriceDescBtn" onclick="setSortMode('price-desc', this)">💎 가격높은순</button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group">
+                <span class="toolbar-label">묶기</span>
+                <button class="sort-btn active" id="groupNoneBtn" onclick="setGroupMode('none', this)">기본</button>
+                <button class="sort-btn" id="groupSellerBtn" onclick="setGroupMode('seller', this)">🏪 업체별</button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group" style="gap:4px;">
+                <button class="view-toggle-btn active" id="viewGridBtn" onclick="setViewMode('grid',this)" title="그리드 보기">⊞</button>
+                <button class="view-toggle-btn" id="viewListBtn" onclick="setViewMode('list',this)" title="목록 보기">☰</button>
+            </div>
+        </div>
+
+        <!-- 통합 검색 패널 -->
+        <div class="search-panel" id="searchPanel">
+            <!-- 이름 검색 -->
+            <div class="search-field" style="flex:1; min-width:180px;">
+                <div class="search-input-wrap">
+                    <span class="search-icon-pos">🔍</span>
+                    <input class="search-text-input" id="searchInput" type="text"
+                        placeholder="제품명 검색..." oninput="onSearchInput(this)">
+                    <button class="search-clear-btn" id="clearSearchBtn" onclick="clearSearch()">✕</button>
+                </div>
+            </div>
+            <div class="search-divider"></div>
+            <!-- 가격 구간 -->
+            <div class="search-field">
+                <span class="search-label">💰 가격</span>
+                <input class="search-num-input" id="priceMinInput" type="number" placeholder="최소" min="0" oninput="onSearchInput()">
+                <span class="search-sep">~</span>
+                <input class="search-num-input" id="priceMaxInput" type="number" placeholder="최대" min="0" oninput="onSearchInput()">
+                <span class="search-label">원</span>
+            </div>
+            <div class="search-divider"></div>
+            <!-- 최소 유사도 점수 -->
+            <div class="search-field">
+                <span class="search-label">⭐ 최소점수</span>
+                <input class="search-num-input" id="scoreMinInput" type="number" placeholder="0" min="0" max="100" style="width:60px;" oninput="onSearchInput()">
+            </div>
+            <div class="search-divider"></div>
+            <!-- 초기화 -->
+            <button class="sort-btn" onclick="resetAllFilters()" style="white-space:nowrap; flex-shrink:0;">↺ 초기화</button>
+            <span class="search-result-badge" id="searchResultBadge"></span>
+        </div>
+
+        <!-- 업체별 2차 탭 바 (업체별 클릭 시 나타남) -->
+        <div class="seller-tabs-bar" id="sellerTabsBar"></div>
+
+        <div class="candidates-grid" id="allCandidatesGrid">
             {% for p in all_candidates %}
             {% set score = p.similarity_score|default(0, true)|float %}
-            <div class="card tier-{{ p.match_tier }}" onclick="toggleSelection(this, '{{ p.id }}')" data-rank="{{ loop.index }}">
+            {% set _price_num = (p.price | replace(',', '') | replace('원', '') | replace(' ', '')) if p.price else '0' %}
+            {% set seller_name = p.seller_name|default('', true) or p.platform %}
+            <div class="card tier-{{ p.match_tier }}" onclick="toggleSelection(this, '{{ p.id }}')" data-rank="{{ loop.index }}" data-platform="{{ p.platform }}" data-price="{{ _price_num }}" data-pid="{{ p.id }}" data-score="{{ score|round(1) }}" data-seller="{{ seller_name|e }}" data-seller-display="{{ seller_name|e }}">
                 <!-- 순위 배지 -->
                 <div class="rank-badge">{% if loop.index <= 10 %}{{ loop.index }}위{% else %}#{{ loop.index }}{% endif %}</div>
                 <!-- 유사도 점수 배지 -->
@@ -459,7 +892,8 @@
                 <div class="card-content">
                     <p class="card-title" title="{{ p.title }}">{{ p.title }}</p>
                     <p class="card-price">{% if p.price and p.price != '0' %}{{ p.price }}원{% else %}<span style="color:var(--text-muted)">가격정보없음</span>{% endif %}</p>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <p class="card-seller" title="업체: {{ seller_name }}">업체: {{ seller_name }}</p>
+                    <div class="card-meta-row">
                         <span class="card-platform">{{ p.platform }}</span>
                         <a href="{{ p.product_url }}" target="_blank" class="external-link"
                             onclick="event.stopPropagation();">링크 열기</a>
@@ -476,6 +910,23 @@
             </div>
             {% endfor %}
         </div>
+
+        <!-- 리스트 뷰 컨테이너 -->
+        <div id="listViewContainer">
+            <div class="list-header">
+                <div class="lc-chk"></div>
+                <div class="lc-thumb"></div>
+                <div class="lc-rank">순위</div>
+                <div class="lc-score">점수</div>
+                <div class="lc-title" style="padding-left:10px;">제품명</div>
+                <div class="lc-tier">티어</div>
+                <div class="lc-price" style="padding-right:8px;">가격</div>
+                <div class="lc-seller">업체</div>
+                <div class="lc-plat">플랫폼</div>
+                <div class="lc-link">링크</div>
+            </div>
+            <div id="listRows"></div>
+        </div>
     </div>
     {% else %}
     <!-- fallback: 기존 tier 분류 방식 -->
@@ -487,14 +938,18 @@
         <div class="section-title">{{ tier_names[tier_num] }} ({{ products|length }}건)</div>
         <div class="candidates-grid">
             {% for p in products %}
-            <div class="card tier-{{ tier_num }}" onclick="toggleSelection(this, '{{ p.id }}')">
+            {% set score = p.similarity_score|default(0, true)|float %}
+            {% set _price_num = (p.price | replace(',', '') | replace('원', '') | replace(' ', '')) if p.price else '0' %}
+            {% set seller_name = p.seller_name|default('', true) or p.platform %}
+            <div class="card tier-{{ tier_num }}" onclick="toggleSelection(this, '{{ p.id }}')" data-platform="{{ p.platform }}" data-price="{{ _price_num }}" data-pid="{{ p.id }}" data-score="{{ score|round(1) }}" data-seller="{{ seller_name|e }}" data-seller-display="{{ seller_name|e }}">
                 <div class="tier-badge">Tier {{ tier_num }}</div>
                 <div class="checkbox-overlay"></div>
                 <img src="/api/thumbnail/{{ p.id }}" class="card-img" alt="{{ p.title }}" loading="lazy">
                 <div class="card-content">
                     <p class="card-title">{{ p.title }}</p>
                     <p class="card-price">{{ p.price }}원</p>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <p class="card-seller" title="업체: {{ seller_name }}">업체: {{ seller_name }}</p>
+                    <div class="card-meta-row">
                         <span class="card-platform">{{ p.platform }}</span>
                         <a href="{{ p.product_url }}" target="_blank" class="external-link"
                             onclick="event.stopPropagation();">링크 열기</a>
@@ -510,13 +965,17 @@
         <div class="section-title" style="opacity: 0.5;">분류됨 (유사도 낮음)</div>
         <div class="candidates-grid" style="opacity: 0.7;">
             {% for p in categories[0] %}
-            <div class="card" onclick="toggleSelection(this, '{{ p.id }}')">
+            {% set score = p.similarity_score|default(0, true)|float %}
+            {% set _price_num = (p.price | replace(',', '') | replace('원', '') | replace(' ', '')) if p.price else '0' %}
+            {% set seller_name = p.seller_name|default('', true) or p.platform %}
+            <div class="card" onclick="toggleSelection(this, '{{ p.id }}')" data-platform="{{ p.platform }}" data-price="{{ _price_num }}" data-pid="{{ p.id }}" data-score="{{ score|round(1) }}" data-seller="{{ seller_name|e }}" data-seller-display="{{ seller_name|e }}">
                 <div class="checkbox-overlay"></div>
                 <img src="/api/thumbnail/{{ p.id }}" class="card-img" alt="{{ p.title }}"
                     onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\'><rect width=\'100%\' height=\'100%\' fill=\'%23333\'/></svg>'">
                 <div class="card-content">
                     <p class="card-title">{{ p.title }}</p>
                     <p class="card-price">{{ p.price }}원</p>
+                    <p class="card-seller" title="업체: {{ seller_name }}">업체: {{ seller_name }}</p>
                     <span class="card-platform">{{ p.platform }}</span>
                 </div>
             </div>
@@ -527,28 +986,61 @@
     {% endif %}
 
     <!-- 여백 확보용 -->
-    <div style="height: 100px;"></div>
+    <div style="height: 160px;"></div>
 
     <!-- 선택 초과 경고 배너 -->
-    <div id="selectionWarning">⛔ 최대 5개까지만 선택할 수 있습니다!</div>
+    <div id="selectionWarning">⛔ 선택 오류가 발생했습니다.</div>
 
-    <div class="action-bar">
-        <div>
-            <span id="selectedCount">선택됨: 0 / 5개</span>
-            <span id="selectionHint" style="margin-left:12px; font-size:0.82rem; color: var(--text-muted);">
-                최대 5개 선택 후 상세페이지 저장
-            </span>
+    <div class="action-bar" style="flex-direction: column; gap: 10px; padding: 0.75rem 2rem;">
+        <!-- GDrive 패널 -->
+        <div id="gdrivePanel" style="display:flex; align-items:center; gap:12px; width:100%; padding:8px 12px; background:rgba(16,185,129,0.07); border:1px solid rgba(16,185,129,0.25); border-radius:8px; flex-wrap:wrap;">
+            <!-- 상태 표시 -->
+            <span id="gdriveStatusDot" style="width:8px;height:8px;border-radius:50%;background:#6b7280;flex-shrink:0;display:inline-block;"></span>
+            <span style="font-size:0.8rem; color:#94a3b8; white-space:nowrap;">☁️ Google Drive</span>
+
+            <!-- 자동저장 토글 -->
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;">
+                <div id="gdriveToggleWrap" onclick="toggleGdriveAuto()" style="width:40px;height:22px;border-radius:11px;background:#374151;cursor:pointer;position:relative;transition:.2s;flex-shrink:0;">
+                    <div id="gdriveToggleKnob" style="width:18px;height:18px;border-radius:50%;background:#9ca3af;position:absolute;top:2px;left:2px;transition:.2s;"></div>
+                </div>
+                <span id="gdriveAutoLabel" style="font-size:0.78rem;color:#94a3b8;">자동저장 OFF</span>
+            </label>
+
+            <!-- 폴더명 입력 -->
+            <label style="font-size:0.78rem;color:#94a3b8;white-space:nowrap;">폴더:</label>
+            <input type="text" id="gdriveFolderInput" value="JepumScraper 상세이미지"
+                style="padding:4px 8px;border-radius:5px;border:1px solid #334155;background:#1e293b;color:#f8fafc;font-size:0.78rem;width:180px;"
+                placeholder="Drive 폴더명" onchange="saveGdriveSettings()">
+
+            <!-- 수동 저장 버튼 -->
+            <button id="gdriveUploadBtn" onclick="uploadToDrive()"
+                style="padding:4px 12px;border-radius:6px;background:#10b981;color:white;border:none;font-size:0.78rem;font-weight:600;cursor:pointer;white-space:nowrap;display:none;">
+                ☁️ Drive에 저장
+            </button>
+
+            <!-- 결과 메시지 -->
+            <span id="gdriveMsg" style="font-size:0.75rem;color:#6ee7b7;margin-left:4px;"></span>
         </div>
-        <div>
-            {% if last_scraped_data %}
-            <button class="btn btn-primary" id="lastDetailViewerBtn" onclick="openViewer()"
-                style="margin-right:10px; background:#4f46e5; border:none;">
-                마지막 수집 이미지 보기
-            </button>
-            {% endif %}
-            <button class="btn btn-primary" id="scrapeBtn" disabled onclick="startScraping()">
-                선택한 제품 상세페이지 따기 엑셀저장
-            </button>
+
+        <!-- 기존 액션 바 내용 -->
+        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+            <div>
+                <span id="selectedCount">선택됨: 0개</span>
+                <span id="selectionHint" style="margin-left:12px; font-size:0.82rem; color: var(--text-muted);">
+                    원하는 만큼 선택 후 상세페이지 저장
+                </span>
+            </div>
+            <div>
+                {% if last_scraped_data %}
+                <button class="btn btn-primary" id="lastDetailViewerBtn" onclick="openViewer()"
+                    style="margin-right:10px; background:#4f46e5; border:none;">
+                    마지막 수집 이미지 보기
+                </button>
+                {% endif %}
+                <button class="btn btn-primary" id="scrapeBtn" disabled onclick="startScraping()">
+                    선택한 제품 상세페이지 따기 엑셀저장
+                </button>
+            </div>
         </div>
     </div>
 
@@ -780,7 +1272,6 @@
     <script>
         const selectedIds = new Set();
         const sessionId = "{{ session_id }}";
-        const MAX_SELECTION = 5;
         window.lastScrapedData = {{ last_scraped_data|tojson }};
         window.excelDownloadUrl = {{ last_download_url|tojson }};
         window.lastDetailSummary = {{ last_detail_summary|tojson }};
@@ -972,22 +1463,14 @@
 
         function toggleSelection(cardElement, productId) {
             if (selectedIds.has(productId)) {
-                // 선택 해제
                 selectedIds.delete(productId);
                 cardElement.classList.remove('selected');
             } else {
-                // 5개 초과 방지
-                if (selectedIds.size >= MAX_SELECTION) {
-                    showWarning(`⛔ 최대 ${MAX_SELECTION}개까지만 선택할 수 있습니다!`);
-                    // 카드 흔들기 효과
-                    cardElement.style.animation = 'none';
-                    cardElement.offsetHeight; // reflow
-                    cardElement.style.animation = 'shake 0.3s ease';
-                    return;
-                }
                 selectedIds.add(productId);
                 cardElement.classList.add('selected');
             }
+            // 리스트뷰 행 동기화
+            if (typeof syncListRow === 'function') syncListRow(productId);
             updateBtnState();
         }
 
@@ -997,16 +1480,16 @@
             const hintSpan = document.getElementById('selectionHint');
             const count = selectedIds.size;
 
-            countSpan.textContent = `선택됨: ${count} / ${MAX_SELECTION}개`;
+            countSpan.textContent = `선택됨: ${count}개`;
             btn.disabled = count === 0;
 
             if (count > 0) {
                 btn.textContent = `${count}개 제품 상세페이지 따기 및 엑셀저장`;
-                hintSpan.textContent = count < MAX_SELECTION ? `${MAX_SELECTION - count}개 더 선택 가능` : `최대 선택 완료`;
-                hintSpan.style.color = count === MAX_SELECTION ? 'var(--success-color)' : 'var(--text-muted)';
+                hintSpan.textContent = `${count}개 선택됨`;
+                hintSpan.style.color = 'var(--success-color)';
             } else {
                 btn.textContent = '선택한 제품 상세페이지 따기 엑셀저장';
-                hintSpan.textContent = `최대 ${MAX_SELECTION}개 선택 후 상세페이지 저장`;
+                hintSpan.textContent = '원하는 만큼 선택 후 상세페이지 저장';
                 hintSpan.style.color = 'var(--text-muted)';
             }
         }
@@ -1023,6 +1506,108 @@
             }`;
             document.head.appendChild(style);
         })();
+
+        // ── Google Drive 연동 ──────────────────────────────────
+        let gdriveAutoEnabled = false;
+
+        async function initGdrive() {
+            try {
+                const res = await fetch('/api/gdrive/status');
+                if (!res.ok) return;
+                const d = await res.json();
+                const dot = document.getElementById('gdriveStatusDot');
+                if (d.ready) {
+                    dot.style.background = '#10b981';
+                    dot.title = '연결됨';
+                } else {
+                    dot.style.background = '#ef4444';
+                    dot.title = 'credentials.json 또는 token 없음';
+                }
+            } catch(e) {}
+
+            // 저장된 설정 복원
+            const saved = localStorage.getItem('jepum_gdrive_auto');
+            const savedFolder = localStorage.getItem('jepum_gdrive_folder');
+            if (saved === 'true') setGdriveAuto(true);
+            if (savedFolder) document.getElementById('gdriveFolderInput').value = savedFolder;
+        }
+
+        function setGdriveAuto(on) {
+            gdriveAutoEnabled = on;
+            const wrap = document.getElementById('gdriveToggleWrap');
+            const knob = document.getElementById('gdriveToggleKnob');
+            const label = document.getElementById('gdriveAutoLabel');
+            wrap.style.background = on ? '#10b981' : '#374151';
+            knob.style.left = on ? '20px' : '2px';
+            knob.style.background = on ? '#ffffff' : '#9ca3af';
+            label.textContent = on ? '자동저장 ON' : '자동저장 OFF';
+            label.style.color = on ? '#6ee7b7' : '#94a3b8';
+            localStorage.setItem('jepum_gdrive_auto', on);
+            // 서버에도 반영
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({gdrive_enabled: on, gdrive_folder: document.getElementById('gdriveFolderInput').value})
+            }).catch(()=>{});
+        }
+
+        function toggleGdriveAuto() {
+            setGdriveAuto(!gdriveAutoEnabled);
+        }
+
+        function saveGdriveSettings() {
+            const folder = document.getElementById('gdriveFolderInput').value;
+            localStorage.setItem('jepum_gdrive_folder', folder);
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({gdrive_enabled: gdriveAutoEnabled, gdrive_folder: folder})
+            }).catch(()=>{});
+        }
+
+        function showGdriveUploadBtn(show) {
+            document.getElementById('gdriveUploadBtn').style.display = show ? 'inline-block' : 'none';
+        }
+
+        async function uploadToDrive() {
+            if (!window.lastScrapedData) {
+                alert('먼저 상세 캡처를 실행해주세요.');
+                return;
+            }
+            const folder = document.getElementById('gdriveFolderInput').value || 'JepumScraper 상세이미지';
+            const btn = document.getElementById('gdriveUploadBtn');
+            const msg = document.getElementById('gdriveMsg');
+            btn.disabled = true;
+            btn.textContent = '업로드 중...';
+            msg.textContent = '';
+            try {
+                const res = await fetch('/api/gdrive/upload', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        folder: folder
+                    })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    msg.textContent = `✅ ${d.uploaded}개 업로드 완료`;
+                    msg.style.color = '#6ee7b7';
+                } else {
+                    msg.textContent = `❌ ${d.error || '업로드 실패'}`;
+                    msg.style.color = '#f87171';
+                }
+            } catch(e) {
+                msg.textContent = '❌ 서버 연결 오류';
+                msg.style.color = '#f87171';
+            }
+            btn.disabled = false;
+            btn.textContent = '☁️ Drive에 저장';
+            setTimeout(()=>{ msg.textContent = ''; }, 5000);
+        }
+
+        initGdrive();
+        // ────────────────────────────────────────────────────────
 
         async function startScraping() {
             if (selectedIds.size === 0) return;
@@ -1065,6 +1650,7 @@
                 if (response.ok) {
                     window.lastScrapedData = data.scraped_data; // 결과를 전역변수에 저장
                     window.excelDownloadUrl = data.download_url;
+                    showGdriveUploadBtn(true); // 수동 Drive 저장 버튼 표시
                     const summary = data.detail_summary || {};
                     const failedCount = Number(summary.failed || 0);
                     const totalCount = Number(summary.total || selectedIds.size);
@@ -1291,6 +1877,382 @@
                 console.error(e);
             }
         }
+
+        // ── 플랫폼 필터 탭 + 정렬 + 업체 그룹 ───────────────────────
+        const PLATFORM_LABELS = {
+            coupang: '쿠팡', naver: '네이버', gmarket: 'G마켓',
+            auction: '옥션', elevenst: '11번가',
+        };
+
+        // 한글/영문 플랫폼명 → 정규화 키 변환 (JS단에서 처리)
+        function normalizePlatform(raw) {
+            const s = (raw || '').trim();
+            if (/coupang|쿠팡/i.test(s)) return 'coupang';
+            if (/naver|네이버/i.test(s))  return 'naver';
+            if (/gmarket|g마켓/i.test(s)) return 'gmarket';
+            if (/auction|옥션/i.test(s))  return 'auction';
+            if (/11st|11번가|elevenst|eleven/i.test(s)) return 'elevenst';
+            return s.toLowerCase();
+        }
+
+        let currentPlatformFilter = 'all';
+        let currentSortMode = 'rank';   // 'rank' | 'price-asc' | 'price-desc'
+        let currentGroupMode = 'none';  // 'none' | 'seller'
+        let currentSellerFilter = 'all'; // seller key or 'all'
+
+        // 업체명: 제목에서 의미있는 첫 단어(2자 이상) 추출
+        function extractSeller(title) {
+            if (!title) return '기타';
+            const words = (title || '').trim().split(/\s+/);
+            for (const w of words) {
+                if (w.length >= 2) return w;
+            }
+            return words[0] || '기타';
+        }
+
+        function escapeHtmlValue(value) {
+            return String(value || '').replace(/[&<>"']/g, (ch) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[ch]));
+        }
+
+        function normalizeSellerKey(name) {
+            return (String(name || '').trim() || '기타').toLowerCase();
+        }
+
+        function getCardPrice(card) {
+            const raw = (card.dataset.price || '0').replace(/[^\d]/g, '');
+            const n = parseInt(raw, 10);
+            return isNaN(n) ? 0 : n;
+        }
+
+        function getAllCardsSorted() {
+            const grid = document.getElementById('allCandidatesGrid');
+            if (!grid) return [];
+            const all = Array.from(grid.querySelectorAll('.card[data-rank]'));
+            if (currentSortMode === 'price-asc') {
+                return all.sort((a, b) => getCardPrice(a) - getCardPrice(b));
+            } else if (currentSortMode === 'price-desc') {
+                return all.sort((a, b) => getCardPrice(b) - getCardPrice(a));
+            }
+            return all.sort((a, b) => parseInt(a.dataset.rank || 0) - parseInt(b.dataset.rank || 0));
+        }
+
+        function getCardSellerName(card) {
+            const direct = (card.dataset.sellerDisplay || card.dataset.seller || '').trim();
+            if (direct) return direct;
+            const sellerEl = card.querySelector('.card-seller');
+            if (sellerEl) {
+                const visibleSeller = sellerEl.textContent.replace(/^업체:\s*/, '').trim();
+                if (visibleSeller) return visibleSeller;
+            }
+            const titleEl = card.querySelector('.card-title');
+            return extractSeller(titleEl ? titleEl.textContent.trim() : '');
+        }
+
+        // 카드에 업체 키 캐시 (최초 1회 계산)
+        function getCardSeller(card) {
+            if (!card.dataset.sellerKey) {
+                card.dataset.sellerKey = normalizeSellerKey(getCardSellerName(card));
+            }
+            return card.dataset.sellerKey;
+        }
+
+        // ── 뷰 모드 ──────────────────────────────────
+        let currentViewMode = 'grid';
+
+        function setViewMode(mode, btn) {
+            currentViewMode = mode;
+            document.getElementById('viewGridBtn')?.classList.toggle('active', mode === 'grid');
+            document.getElementById('viewListBtn')?.classList.toggle('active', mode === 'list');
+            document.getElementById('allCandidatesGrid').style.display = mode === 'grid' ? '' : 'none';
+            document.getElementById('listViewContainer').style.display = mode === 'list' ? 'flex' : 'none';
+            if (mode === 'list') buildListView();
+        }
+
+        function buildListView() {
+            const rowsEl = document.getElementById('listRows');
+            if (!rowsEl) return;
+            rowsEl.innerHTML = '';
+            const grid = document.getElementById('allCandidatesGrid');
+            const cards = Array.from(grid.querySelectorAll('.card[data-rank]'))
+                .filter(c => c.style.display !== 'none');
+
+            const TIER_DOT  = { '1': { sym:'●', cls:'score-high', tip:'이미지 동일' },
+                                 '2': { sym:'●', cls:'score-mid',  tip:'형태/이름 유사' },
+                                 '3': { sym:'●', cls:'score-low',  tip:'형태 유사(색상 다름)' } };
+            const PLAT_COLOR = { coupang:'#f97316', naver:'#22c55e', gmarket:'#3b82f6', auction:'#a855f7', elevenst:'#ec4899' };
+
+            cards.forEach(card => {
+                const pid   = card.dataset.pid;
+                const rank  = card.dataset.rank;
+                const plat  = card.dataset.platform;
+                const price = getCardPrice(card);
+                const score = parseFloat(card.dataset.score || '0');
+                const title = card.querySelector('.card-title')?.textContent || '';
+                const imgSrc= card.querySelector('.card-img')?.src || '';
+                const link  = card.querySelector('.external-link')?.href || '#';
+                const tier  = ([...card.classList].find(c => c.startsWith('tier-')) || '').replace('tier-','');
+                const sel   = selectedIds.has(pid);
+                const platLabel = PLATFORM_LABELS[plat] || plat;
+                const platColor = PLAT_COLOR[plat] || '#6b7280';
+                const td    = TIER_DOT[tier] || { sym:'·', cls:'', tip:'' };
+                const scoreCls = score >= 70 ? 'score-high' : score >= 40 ? 'score-mid' : 'score-low';
+                const seller = getCardSellerName(card);
+                const safeTitle = escapeHtmlValue(title);
+                const safeSeller = escapeHtmlValue(seller);
+                const safeLink = escapeHtmlValue(link);
+
+                const row = document.createElement('div');
+                row.className = 'list-row' + (sel ? ' selected' : '');
+                row.dataset.pid = pid;
+                row.innerHTML = `
+                    <div class="lc-chk"><div class="list-checkbox-sq">${sel ? '✓' : ''}</div></div>
+                    <div class="lc-thumb">
+                        <img class="list-thumb-img" src="${imgSrc}" alt=""
+                            onerror="this.style.background='#333';this.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'">
+                    </div>
+                    <div class="lc-rank">${parseInt(rank)<=10 ? rank+'위' : '#'+rank}</div>
+                    <div class="lc-score"><span class="list-score-sm ${scoreCls}">${score.toFixed(1)}</span></div>
+                    <div class="lc-title" title="${safeTitle}">${safeTitle}</div>
+                    <div class="lc-tier"><span style="color:var(--${td.cls==='score-high'?'success':td.cls==='score-mid'?'warning':'danger'}-color);" title="${td.tip}">${td.sym}</span></div>
+                    <div class="lc-price">${price>0 ? price.toLocaleString()+'원' : '<span style="color:var(--text-muted)">-</span>'}</div>
+                    <div class="lc-seller" title="${safeSeller}">${safeSeller}</div>
+                    <div class="lc-plat"><span style="font-size:0.72rem;padding:2px 7px;border-radius:8px;background:${platColor}22;color:${platColor};font-weight:600;">${platLabel}</span></div>
+                    <div class="lc-link"><a class="list-ext-link" href="${safeLink}" target="_blank" onclick="event.stopPropagation()">↗</a></div>`;
+
+                row.addEventListener('click', () => {
+                    const cardEl = grid.querySelector(`.card[data-pid="${pid}"]`);
+                    if (cardEl) toggleSelection(cardEl, pid);
+                    else {
+                        // card hidden in grid but list row clicked
+                        if (selectedIds.has(pid)) { selectedIds.delete(pid); }
+                        else { selectedIds.add(pid); }
+                        updateBtnState();
+                    }
+                    syncListRow(pid);
+                });
+                rowsEl.appendChild(row);
+            });
+        }
+
+        function syncListRow(pid) {
+            const row = document.querySelector(`#listRows .list-row[data-pid="${pid}"]`);
+            if (!row) return;
+            const sel = selectedIds.has(pid);
+            row.classList.toggle('selected', sel);
+            const chk = row.querySelector('.list-checkbox-sq');
+            if (chk) chk.textContent = sel ? '✓' : '';
+        }
+
+        // ── 검색 필터 ────────────────────────────────
+        let _searchTimer = null;
+        function onSearchInput(inputEl) {
+            if (inputEl && inputEl.id === 'searchInput') {
+                document.getElementById('clearSearchBtn').style.display =
+                    inputEl.value ? 'block' : 'none';
+            }
+            clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(applyFilters, 220);
+        }
+
+        function clearSearch() {
+            const el = document.getElementById('searchInput');
+            if (el) el.value = '';
+            document.getElementById('clearSearchBtn').style.display = 'none';
+            applyFilters();
+        }
+
+        function resetAllFilters() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('priceMinInput').value = '';
+            document.getElementById('priceMaxInput').value = '';
+            document.getElementById('scoreMinInput').value = '';
+            document.getElementById('clearSearchBtn').style.display = 'none';
+            applyFilters();
+        }
+
+        function initPlatformTabs() {
+            const grid = document.getElementById('allCandidatesGrid');
+            if (!grid) return;
+            const cards = grid.querySelectorAll('.card[data-platform]');
+            const counts = {};
+
+            // 모든 카드의 data-platform을 정규화된 키로 교체
+            cards.forEach(card => {
+                const normalized = normalizePlatform(card.getAttribute('data-platform'));
+                card.setAttribute('data-platform', normalized);
+                counts[normalized] = (counts[normalized] || 0) + 1;
+            });
+
+            Object.keys(PLATFORM_LABELS).forEach(key => {
+                const tab = document.getElementById('tab-' + key);
+                const countEl = document.getElementById('tab-count-' + key);
+                if (!tab) return;
+                if (counts[key]) {
+                    tab.style.display = '';
+                    if (countEl) countEl.textContent = counts[key];
+                } else {
+                    tab.style.display = 'none';
+                }
+            });
+
+            const totalEl = document.getElementById('tab-count-all');
+            if (totalEl) totalEl.textContent = cards.length;
+        }
+
+        function filterPlatform(platform, tabEl) {
+            currentPlatformFilter = platform;
+            document.querySelectorAll('.platform-tab').forEach(t => t.classList.remove('active'));
+            if (tabEl) tabEl.classList.add('active');
+            // 업체별 모드면 탭 재빌드
+            if (currentGroupMode === 'seller') {
+                currentSellerFilter = 'all';
+                buildSellerTabs();
+            }
+            applyFilters();
+        }
+
+        function setSortMode(mode, btn) {
+            currentSortMode = mode;
+            ['sortRankBtn','sortPriceAscBtn','sortPriceDescBtn'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.remove('active');
+            });
+            if (btn) btn.classList.add('active');
+            applyFilters();
+        }
+
+        function setGroupMode(mode, btn) {
+            currentGroupMode = mode;
+            document.getElementById('groupNoneBtn')?.classList.toggle('active', mode === 'none');
+            document.getElementById('groupSellerBtn')?.classList.toggle('active', mode === 'seller');
+
+            const bar = document.getElementById('sellerTabsBar');
+            if (mode === 'seller') {
+                currentSellerFilter = 'all';
+                buildSellerTabs();
+                if (bar) bar.style.display = 'flex';
+            } else {
+                currentSellerFilter = 'all';
+                if (bar) bar.style.display = 'none';
+            }
+            applyFilters();
+        }
+
+        // 업체별 2차 탭 빌드
+        function buildSellerTabs() {
+            const bar = document.getElementById('sellerTabsBar');
+            if (!bar) return;
+
+            const grid = document.getElementById('allCandidatesGrid');
+            const allCards = grid ? Array.from(grid.querySelectorAll('.card[data-rank]')) : [];
+
+            // 플랫폼 필터 적용 후 카드 수집
+            const visibleCards = allCards.filter(c =>
+                currentPlatformFilter === 'all' || c.dataset.platform === currentPlatformFilter
+            );
+
+            // 업체별 집계
+            const sellerMap = new Map();
+            visibleCards.forEach(card => {
+                const key = getCardSeller(card);
+                if (!sellerMap.has(key)) {
+                    const name = getCardSellerName(card);
+                    sellerMap.set(key, { name, count: 0, plats: new Set() });
+                }
+                const e = sellerMap.get(key);
+                e.count++;
+                e.plats.add(PLATFORM_LABELS[card.dataset.platform] || card.dataset.platform);
+            });
+
+            // 많은 순 정렬
+            const sorted = Array.from(sellerMap.entries())
+                .sort((a, b) => b[1].count - a[1].count)
+                .filter(([, v]) => v.count >= 1);
+
+            // 탭 렌더링
+            bar.innerHTML = '';
+            const makeTab = (key, label, count, platStr, isActive) => {
+                const t = document.createElement('span');
+                t.className = 'seller-tab' + (isActive ? ' active' : '');
+                t.dataset.sellerKey = key;
+                const safeLabel = escapeHtmlValue(label);
+                const safePlat = escapeHtmlValue(platStr);
+                t.innerHTML = `${safeLabel} <b>${count}</b>` + (safePlat ? ` <small>${safePlat}</small>` : '');
+                t.addEventListener('click', () => filterSeller(key, t));
+                bar.appendChild(t);
+            };
+            makeTab('all', '모두', visibleCards.length, '', currentSellerFilter === 'all');
+            sorted.forEach(([key, { name, count, plats }]) => {
+                makeTab(key, name, count, Array.from(plats).join('·'), currentSellerFilter === key);
+            });
+        }
+
+        function filterSeller(key, tabEl) {
+            currentSellerFilter = key;
+            document.querySelectorAll('.seller-tab').forEach(t => t.classList.remove('active'));
+            if (tabEl) tabEl.classList.add('active');
+            applyFilters();
+        }
+
+        // 단일 필터 적용 함수 (플랫폼 + 업체 + 검색어 + 가격 + 점수 + 정렬)
+        function applyFilters() {
+            const grid = document.getElementById('allCandidatesGrid');
+            if (!grid) return;
+
+            const query    = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+            const priceMin = parseFloat(document.getElementById('priceMinInput')?.value || '') || 0;
+            const priceMax = parseFloat(document.getElementById('priceMaxInput')?.value || '') || Infinity;
+            const scoreMin = parseFloat(document.getElementById('scoreMinInput')?.value || '') || 0;
+
+            const sorted = getAllCardsSorted();
+            let visible = 0;
+            sorted.forEach(card => {
+                grid.appendChild(card); // 정렬 순서 적용
+
+                const platOk = currentPlatformFilter === 'all' ||
+                               card.dataset.platform === currentPlatformFilter;
+                const sellerOk = currentGroupMode !== 'seller' ||
+                                 currentSellerFilter === 'all' ||
+                                 getCardSeller(card) === currentSellerFilter;
+                const sellerText = getCardSellerName(card).toLowerCase();
+                const titleText = (card.querySelector('.card-title')?.textContent || '').toLowerCase();
+                const titleOk  = !query ||
+                                 titleText.includes(query) ||
+                                 sellerText.includes(query);
+                const price    = getCardPrice(card);
+                const priceOk  = price === 0 || (price >= priceMin && price <= priceMax);
+                const score    = parseFloat(card.dataset.score || '0');
+                const scoreOk  = score >= scoreMin;
+
+                const show = platOk && sellerOk && titleOk && priceOk && scoreOk;
+                card.style.display = show ? '' : 'none';
+                if (show) visible++;
+            });
+
+            const countEl = document.getElementById('tabResultCount');
+            if (countEl) countEl.textContent = visible;
+
+            // 검색결과 배지
+            const badge = document.getElementById('searchResultBadge');
+            const total = grid.querySelectorAll('.card[data-rank]').length;
+            if (badge) {
+                badge.innerHTML = visible < total
+                    ? `검색결과 <b>${visible}</b> / ${total}개`
+                    : '';
+            }
+
+            // 리스트뷰 동기화
+            if (currentViewMode === 'list') buildListView();
+        }
+
+        initPlatformTabs();
+        // ─────────────────────────────────────────────────────────────
 
         async function saveToLocal() {
             if (selectedIds.size === 0) {
